@@ -1,0 +1,28 @@
+# Secrets / environment
+.env
+.env.*
+env.txt
+config.json
+secrets.json
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs and runtime state
+*.log
+data/
+bot_state.json
+bot_state.json.tmp
+seedtrack_state.json
+rotation_state.json
+sticky_state.json
+
+# Node (legacy)
+node_modules/
+out/
+dist/
+*.vsix

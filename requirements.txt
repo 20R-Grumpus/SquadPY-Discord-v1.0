@@ -1,0 +1,11 @@
+aiofiles
+aiohttp
+aio-mc-rcon
+discord.py
+google-api-python-client
+google-auth
+paramiko
+python-dateutil
+python-dotenv
+pytz
+requests
