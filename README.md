@@ -112,8 +112,8 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | `CHECK_INTERVAL_SECONDS` | Yes | How often the monitor loop polls the player count. |
 | `LIVE_PLAYER_COUNT` | Yes | Player count at/above which the server is considered "live". |
 | `RESTART_HOUR` | Yes | Hour (London time) used for the scheduled daily restart/reset logic. Does not restart server, pushes rotation prior to restart. |
-| `RESTART_MINUTE` | Yes | Minute used alongside `RESTART_HOUR`. |
-| `COMPETING_SERVER_DICT` | No (default `{}`) | JSON object of `{"Display Name": "battlemetrics_id"}` for the `/playercounts` command. |
+| `RESTART_MINUTE` | Yes | Minute used alongside `RESTART_HOUR`. Set 5 min prior to server restart. |
+| `COMPETING_SERVER_DICT` | No (default `{}`) | JSON object of `{"Display Name": "battlemetrics_id"}` for the `/seedtrack` command. |
 
 Fixed seeding behavior (not env-configurable, defined in `config.py`):
 `COOLDOWN_HOURS=8`, auto-trigger band `45`–`55` players, and an auto-seed window of
