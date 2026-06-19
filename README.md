@@ -111,7 +111,7 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | `MILESTONE_STEP` | Yes | Step size for player-count milestones; milestones are `range(10, 70, MILESTONE_STEP)`. |
 | `CHECK_INTERVAL_SECONDS` | Yes | How often the monitor loop polls the player count. |
 | `LIVE_PLAYER_COUNT` | Yes | Player count at/above which the server is considered "live". |
-| `RESTART_HOUR` | Yes | Hour (London time) used for the scheduled daily restart/reset logic. |
+| `RESTART_HOUR` | Yes | Hour (London time) used for the scheduled daily restart/reset logic. Does not restart server, pushes rotation prior to restart. |
 | `RESTART_MINUTE` | Yes | Minute used alongside `RESTART_HOUR`. |
 | `COMPETING_SERVER_DICT` | No (default `{}`) | JSON object of `{"Display Name": "battlemetrics_id"}` for the `/playercounts` command. |
 
