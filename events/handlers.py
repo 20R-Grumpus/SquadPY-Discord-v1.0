@@ -272,6 +272,22 @@ async def _get_guild_member(user_id: int) -> discord.Member | None:
         return None
 
 
+_HELP_TEXT = (
+    "**Friend Whitelist -- Available Commands**\n"
+    "\n"
+    "`<steam_id> [label]` -- Add a friend by Steam ID (17 digits)\n"
+    "`<eos_id> [label]` -- Add a friend by EOS ID (32 characters)\n"
+    "`!remove <steam_or_eos_id>` -- Remove a friend from your list\n"
+    "`!friends` -- Show your current friends and remaining slots\n"
+    "`!help` -- Show this help message\n"
+    "\n"
+    "**Examples:**\n"
+    "`76561198140219287` -- add a friend by Steam ID\n"
+    "`76561198140219287 MyBuddy` -- add with a label\n"
+    "`!remove 76561198140219287` -- remove that friend\n"
+)
+
+
 async def _handle_dm(message: discord.Message):
     """Process a DM for the friend-whitelist system."""
     content = message.content.strip()
@@ -296,37 +312,74 @@ async def _handle_dm(message: discord.Message):
 
     lower = content.lower()
 
+    # !help -- show available commands
+    if lower in ("!help", "help", "!commands", "commands"):
+        current = get_friend_count(str(message.author.id))
+        await message.channel.send(
+            f"{_HELP_TEXT}"
+            f"You have **{max_slots - current}** of **{max_slots}** slots remaining."
+        )
+        return
+
     # !friends -- list current friends
     if lower == "!friends":
         entries = get_friend_entries(str(message.author.id))
         if not entries:
             await message.channel.send(
                 f"You have no friends added. You can add up to **{max_slots}**.\n"
-                "DM me a Steam ID (17 digits) or EOS ID (32 chars) to add one."
+                "Send a **Steam ID** (17 digits) or **EOS ID** (32 chars) to add one.\n\n"
+                "Type `!help` for a full list of commands."
             )
             return
         lines = [f"**Your friends** ({len(entries)}/{max_slots}):"]
         for i, e in enumerate(entries, 1):
             label = f" -- {e['label']}" if e.get("label") else ""
             lines.append(f"`{i}.` `{e['steam_or_eos']}`{label}")
+        lines.append(f"\n**{max_slots - len(entries)}** slot(s) remaining. "
+                      "Type `!help` for commands.")
         await message.channel.send("\n".join(lines))
         return
 
     # !remove <id> -- remove a friend
     if lower.startswith("!remove"):
         parts = content.split(maxsplit=1)
-        if len(parts) < 2:
-            await message.channel.send("Usage: `!remove <steam_or_eos_id>`")
+        if len(parts) < 2 or not parts[1].strip():
+            await message.channel.send(
+                "You need to specify which ID to remove.\n\n"
+                "**Usage:** `!remove <steam_or_eos_id>`\n"
+                "**Example:** `!remove 76561198140219287`\n\n"
+                "Type `!friends` to see your current list."
+            )
             return
         target_id = parts[1].strip()
+        if not (is_valid_steamid(target_id) or is_valid_eosid(target_id)):
+            await message.channel.send(
+                f"`{target_id}` doesn't look like a valid Steam ID (17 digits) "
+                "or EOS ID (32 characters).\n\n"
+                "**Usage:** `!remove <steam_or_eos_id>`\n"
+                "Type `!friends` to see your current IDs."
+            )
+            return
         if remove_friend_entry(str(message.author.id), target_id):
             await write_admins_cfg()
             logger.info("Friend removed via DM by %s: %s", message.author, target_id)
-            await message.channel.send(f"Removed `{target_id}` from your friend list.")
+            current = get_friend_count(str(message.author.id))
+            await message.channel.send(
+                f"Removed `{target_id}` from your friend list. "
+                f"**{max_slots - current}** slot(s) now available."
+            )
         else:
             await message.channel.send(
-                f"`{target_id}` was not found in your friend list."
+                f"`{target_id}` was not found in your friend list.\n"
+                "Type `!friends` to see your current entries."
             )
+        return
+
+    # Catch other !commands that aren't recognized
+    if lower.startswith("!"):
+        await message.channel.send(
+            f"Unknown command: `{content.split()[0]}`\n\n{_HELP_TEXT}"
+        )
         return
 
     # add a friend (raw ID, optionally followed by a label)
@@ -335,20 +388,35 @@ async def _handle_dm(message: discord.Message):
     label = parts[1] if len(parts) > 1 else ""
 
     if not (is_valid_steamid(candidate_id) or is_valid_eosid(candidate_id)):
+        # Try to give specific advice based on what they sent
+        advice = ""
+        stripped = re.sub(r"[^a-zA-Z0-9]", "", candidate_id)
+        if stripped.isdigit() and len(stripped) != 17:
+            advice = (
+                f"Your input has **{len(stripped)}** digits, but a Steam ID "
+                "must be exactly **17** digits.\n\n"
+            )
+        elif len(stripped) > 0 and not stripped.isdigit() and len(stripped) != 32:
+            advice = (
+                f"Your input is **{len(stripped)}** characters, but an EOS ID "
+                "must be exactly **32** alphanumeric characters.\n\n"
+            )
+
         await message.channel.send(
-            "Unrecognised input. Send a valid **Steam ID** (17 digits) or "
-            "**EOS ID** (32 chars) to add a friend.\n\n"
-            "Other commands:\n"
-            "`!friends` -- list your friends\n"
-            "`!remove <id>` -- remove a friend"
+            f"I couldn't recognise that as a valid ID.\n\n"
+            f"{advice}"
+            "A **Steam ID** is exactly **17 digits** (e.g. `76561198140219287`).\n"
+            "An **EOS ID** is exactly **32 alphanumeric characters**.\n\n"
+            f"{_HELP_TEXT}"
         )
         return
 
     current_count = get_friend_count(str(message.author.id))
     if current_count >= max_slots:
         await message.channel.send(
-            f"You've used all **{max_slots}** friend slots. "
-            "Remove one first with `!remove <id>`."
+            f"You've used all **{max_slots}** friend slots.\n"
+            "Remove one first with `!remove <id>` to free up a slot.\n"
+            "Type `!friends` to see your current list."
         )
         return
 
@@ -359,13 +427,16 @@ async def _handle_dm(message: discord.Message):
             "Friend added via DM by %s: %s (label=%s)",
             message.author, candidate_id, label,
         )
+        label_note = f" with label **{label}**" if label else ""
         await message.channel.send(
-            f"Added `{candidate_id}` to your friend whitelist. "
-            f"**{remaining}** slot(s) remaining."
+            f"Added `{candidate_id}`{label_note} to your friend whitelist.\n"
+            f"**{remaining}** slot(s) remaining.\n\n"
+            "Type `!friends` to see your list or `!help` for all commands."
         )
     else:
         await message.channel.send(
-            f"`{candidate_id}` is already in your friend list."
+            f"`{candidate_id}` is already in your friend list.\n"
+            "Type `!friends` to see your current entries."
         )
 
 
