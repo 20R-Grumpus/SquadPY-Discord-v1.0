@@ -9,6 +9,7 @@ from utils.discord_helpers import DiscordLogHandler
 from utils.retry import init_http_session
 from features.seeding import background_task
 from features.rotation import schedule_daily_rotation_update, rotation_join_link_updater
+from features.whitelist import whitelist_background_task
 
 BOT_USERNAME = "OOR v3.1"  # Set to None to disable
 
@@ -72,6 +73,13 @@ async def on_ready():
         logger.info("Join link updater started")
     else:
         logger.info("Join link updater already running — skipping")
+
+    # ---- Whitelist background task (Admins.cfg refresh + pruning) ----
+    if not state.whitelist_task_ref or state.whitelist_task_ref.done():
+        state.whitelist_task_ref = asyncio.create_task(whitelist_background_task())
+        logger.info("Whitelist background task started")
+    else:
+        logger.info("Whitelist background task already running — skipping")
 
     commands = await tree.fetch_commands()
 

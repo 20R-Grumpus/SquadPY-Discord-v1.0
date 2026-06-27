@@ -211,3 +211,48 @@ COMP_ADMIN_LIST_URL = os.getenv("COMP_ADMIN_LIST_URL", "")
 # Local directory for admin config backups
 BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(DATA_DIR / "admin_backups")))
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Whitelist system
+# ---------------------------------------------------------------------------
+
+# SQLite database for whitelist data (linked IDs, manual whitelists, friends)
+WHITELIST_DB_PATH = os.getenv("WHITELIST_DB_PATH", str(DATA_DIR / "whitelist.db"))
+
+# Local path where the generated Admins.cfg is written
+WHITELIST_OUTPUT_PATH = os.getenv(
+    "WHITELIST_OUTPUT_PATH", str(DATA_DIR / "Admins.cfg")
+)
+
+# How often (seconds) the background task regenerates Admins.cfg and prunes
+# expired entries / revoked roles.
+WHITELIST_REFRESH_INTERVAL = int(os.getenv("WHITELIST_REFRESH_INTERVAL", "300"))
+
+# JSON mapping of Discord role IDs to Squad permission group names.
+# Example: {"123456": "Admin", "789012": "Moderator"}
+WHITELIST_ROLE_GROUP_MAP = json.loads(os.getenv("WHITELIST_ROLE_GROUP_MAP", "{}"))
+
+# JSON mapping of Squad group names to their permissions.
+# Example: {"Admin": "balance,ban,cameraman,...", "Moderator": "canseeadminchat,..."}
+WHITELIST_GROUP_PERMS = json.loads(os.getenv("WHITELIST_GROUP_PERMS", "{}"))
+
+# Role IDs allowed to use /whitelist (comma-separated). Falls back to
+# ALLOWED_ROLE_IDS when empty.
+_wl_roles_env = os.getenv("WHITELIST_ALLOWED_ROLE_IDS", "")
+WHITELIST_ALLOWED_ROLE_IDS = set(
+    int(r.strip()) for r in _wl_roles_env.split(",") if r.strip()
+) or ALLOWED_ROLE_IDS
+
+# The default group assigned by /whitelist when no explicit group is given.
+WHITELIST_DEFAULT_GROUP = os.getenv("WHITELIST_DEFAULT_GROUP", "Whitelisted")
+
+# Friend-whitelist tiers: JSON mapping role ID -> max friends allowed.
+# Example: {"111": 3, "222": 5, "333": 10}
+WHITELIST_FRIEND_TIERS = json.loads(os.getenv("WHITELIST_FRIEND_TIERS", "{}"))
+
+# Tag prefix added to Admin= comment lines, e.g. "[20R] ".
+WHITELIST_TAG_PREFIX = os.getenv("WHITELIST_TAG_PREFIX", "")
+
+# Optional: SFTP target to push generated Admins.cfg.
+# Uses main SFTP credentials. Leave blank to skip SFTP push.
+WHITELIST_SFTP_REMOTE_PATH = os.getenv("WHITELIST_SFTP_REMOTE_PATH", "")
