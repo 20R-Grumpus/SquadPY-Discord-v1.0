@@ -29,13 +29,15 @@ project imports, so any module can import it without creating an import cycle.
 │   ├── seeding.py              # Seeding triggers, auto-seed window, scheduling, monitor loop
 │   ├── rotation.py             # Map rotation, Google Sheet parsing, join-link updates
 │   ├── prospects.py            # Prospect review UI, roster sheet writes, role assignment
-│   └── admins.py               # Admins.cfg generation, backups, remote admin list
+│   ├── admins.py               # Admins.cfg generation, backups, remote admin list
+│   └── whitelist.py            # Whitelist system: DB, Admins.cfg generation, background sync
 │
 ├── commands/                   # Slash commands, grouped by domain
 │   ├── seeding_commands.py     # /seedbotstart /seedbotstop /seedbotstatus /seedbothelp /seedbotreload
 │   ├── admin_commands.py       # /matchconfig /resetconfig /addcameraman /removefromdb /addtodb
 │   ├── prospect_commands.py    # /addprospect
-│   └── util_commands.py        # /addfog /showfog /removefog /killfeed /test /seederboard /playercounts /seedtrack
+│   ├── util_commands.py        # /addfog /showfog /removefog /killfeed /test /seederboard /playercounts /seedtrack
+│   └── whitelist_commands.py   # /link /overwritelink /unlink /whitelist /whiteliststatus
 │
 ├── utils/                      # Cross-cutting helpers
 │   ├── sftp.py                 # SFTP read/write/download/modify helpers
@@ -44,7 +46,7 @@ project imports, so any module can import it without creating an import cycle.
 │   └── validation.py           # SteamID / EOSID / layer-name validators
 │
 └── events/                     # Discord event listeners
-    ├── handlers.py             # on_thread_create (ban evidence), on_message (sticky)
+    ├── handlers.py             # on_thread_create (ban evidence), on_message (sticky + DM friend whitelist)
     └── startup.py              # on_ready (sync commands, start background tasks)
 ```
 
@@ -172,6 +174,24 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 - `fetch_remote_list() -> str` — downloads the competitive admin list from the
   remote URL.
 
+### `features/whitelist.py`
+- `init_whitelist_db()` — creates SQLite tables for linked IDs, whitelist entries,
+  friend entries, and an audit log.
+- `get_linked_id(discord_id) -> dict | None` — looks up a user's linked Steam/EOS ID.
+- `set_linked_id(...)` — inserts or (with `overwrite=True`) updates a linked ID.
+- `delete_linked_id(discord_id, removed_by)` — removes a linked ID.
+- `add_whitelist_entry(...)` — adds a manual whitelist entry with optional expiry.
+- `remove_expired_whitelist_entries()` — prunes entries past their `expires_at`.
+- `list_whitelist_entries()` — returns all current whitelist entries.
+- `get_friend_count(owner_id)` / `get_friend_entries(owner_id)` — friend-slot queries.
+- `add_friend_entry(owner_id, steam_or_eos, label)` — adds a friend whitelist entry.
+- `remove_friend_entry(owner_id, steam_or_eos)` — removes a single friend entry.
+- `remove_all_friends(owner_id)` — purges all friends for an owner (e.g. role lost).
+- `max_friends_for_member(member) -> int` — highest friend-slot tier for a member.
+- `generate_admins_cfg() -> str` — builds the full `Admins.cfg` organized by group.
+- `write_admins_cfg()` — generates and writes (and optionally SFTP-pushes) the file.
+- `whitelist_background_task()` — periodic loop: prune + regenerate.
+
 ### `commands/seeding_commands.py`
 - `/seedbotstart` (`seedbotstart`) — start seeding now or schedule it at `HH:MM`.
 - `/seedbotstop` (`seedbotstop`) — stop active or cancel scheduled seeding.
@@ -212,9 +232,19 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
   embed.
 - `on_thread_create(thread)` — on a new ban-evidence forum thread, records the ban
   and syncs the banned-players DB.
-- `on_message(message)` — maintains the sticky reminder message in the report channel.
+- `_handle_dm(message)` — processes DMs for the friend-whitelist system (add/remove
+  friends, list slots).
+- `on_message(message)` — routes DMs to `_handle_dm`, then maintains the sticky
+  reminder message in the report channel.
+
+### `commands/whitelist_commands.py`
+- `/link` (`link`) — link your Steam/EOS ID to your Discord account (one-time use).
+- `/overwritelink` (`overwritelink`) — [Staff] overwrite any member's linked ID.
+- `/unlink` (`unlink`) — [Staff] remove a member's linked ID.
+- `/whitelist` (`whitelist_cmd`) — [Staff] whitelist a player by name + ID + duration.
+- `/whiteliststatus` (`whiteliststatus`) — show your linked ID and whitelist info.
 
 ### `events/startup.py`
 - `on_ready()` — attaches the Discord log handler, syncs slash commands to the
   guild, and starts the background tasks (seeding loop, rotation schedule, join-link
-  updater).
+  updater, whitelist sync).

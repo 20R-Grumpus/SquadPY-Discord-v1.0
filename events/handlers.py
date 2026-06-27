@@ -1,4 +1,4 @@
-"""Discord event listeners: forum ban evidence and sticky messages."""
+"""Discord event listeners: forum ban evidence, sticky messages, and DM friend whitelist."""
 
 import re
 import asyncio
@@ -8,6 +8,7 @@ import discord
 
 from config import (
     logger,
+    GUILD_ID,
     FORUM_CHANNEL_ID,
     STICKY_CHANNEL_ID,
     STICKY_PING_ROLE_ID,
@@ -20,6 +21,15 @@ from database import (
     load_banned_players,
     find_player_by_steamid,
     push_banned_players_to_sftp,
+)
+from utils.validation import is_valid_steamid, is_valid_eosid
+from features.whitelist import (
+    max_friends_for_member,
+    get_friend_count,
+    get_friend_entries,
+    add_friend_entry,
+    remove_friend_entry,
+    write_admins_cfg,
 )
 
 # --- Sticky Info Message Feature ---
@@ -249,11 +259,126 @@ async def on_thread_create(thread: discord.Thread):
         logger.error(f"Error processing forum post: {e}", exc_info=True)
 
 
+# -- DM friend whitelist helpers --------------------------------------------
+
+
+async def _get_guild_member(user_id: int) -> discord.Member | None:
+    guild = client.get_guild(GUILD_ID)
+    if guild is None:
+        return None
+    try:
+        return await guild.fetch_member(user_id)
+    except (discord.NotFound, discord.HTTPException):
+        return None
+
+
+async def _handle_dm(message: discord.Message):
+    """Process a DM for the friend-whitelist system."""
+    content = message.content.strip()
+    if not content:
+        return
+
+    member = await _get_guild_member(message.author.id)
+    if member is None:
+        await message.channel.send(
+            "I couldn't find you in the server. "
+            "Make sure you're a member of the guild."
+        )
+        return
+
+    max_slots = max_friends_for_member(member)
+    if max_slots == 0:
+        await message.channel.send(
+            "You don't have a role that allows friend whitelist slots. "
+            "Contact staff if you believe this is an error."
+        )
+        return
+
+    lower = content.lower()
+
+    # !friends -- list current friends
+    if lower == "!friends":
+        entries = get_friend_entries(str(message.author.id))
+        if not entries:
+            await message.channel.send(
+                f"You have no friends added. You can add up to **{max_slots}**.\n"
+                "DM me a Steam ID (17 digits) or EOS ID (32 chars) to add one."
+            )
+            return
+        lines = [f"**Your friends** ({len(entries)}/{max_slots}):"]
+        for i, e in enumerate(entries, 1):
+            label = f" -- {e['label']}" if e.get("label") else ""
+            lines.append(f"`{i}.` `{e['steam_or_eos']}`{label}")
+        await message.channel.send("\n".join(lines))
+        return
+
+    # !remove <id> -- remove a friend
+    if lower.startswith("!remove"):
+        parts = content.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.channel.send("Usage: `!remove <steam_or_eos_id>`")
+            return
+        target_id = parts[1].strip()
+        if remove_friend_entry(str(message.author.id), target_id):
+            await write_admins_cfg()
+            logger.info("Friend removed via DM by %s: %s", message.author, target_id)
+            await message.channel.send(f"Removed `{target_id}` from your friend list.")
+        else:
+            await message.channel.send(
+                f"`{target_id}` was not found in your friend list."
+            )
+        return
+
+    # add a friend (raw ID, optionally followed by a label)
+    parts = content.split(maxsplit=1)
+    candidate_id = parts[0]
+    label = parts[1] if len(parts) > 1 else ""
+
+    if not (is_valid_steamid(candidate_id) or is_valid_eosid(candidate_id)):
+        await message.channel.send(
+            "Unrecognised input. Send a valid **Steam ID** (17 digits) or "
+            "**EOS ID** (32 chars) to add a friend.\n\n"
+            "Other commands:\n"
+            "`!friends` -- list your friends\n"
+            "`!remove <id>` -- remove a friend"
+        )
+        return
+
+    current_count = get_friend_count(str(message.author.id))
+    if current_count >= max_slots:
+        await message.channel.send(
+            f"You've used all **{max_slots}** friend slots. "
+            "Remove one first with `!remove <id>`."
+        )
+        return
+
+    if add_friend_entry(str(message.author.id), candidate_id, label):
+        await write_admins_cfg()
+        remaining = max_slots - current_count - 1
+        logger.info(
+            "Friend added via DM by %s: %s (label=%s)",
+            message.author, candidate_id, label,
+        )
+        await message.channel.send(
+            f"Added `{candidate_id}` to your friend whitelist. "
+            f"**{remaining}** slot(s) remaining."
+        )
+    else:
+        await message.channel.send(
+            f"`{candidate_id}` is already in your friend list."
+        )
+
+
 @client.event
 async def on_message(message: discord.Message):
 
     # Ignore bot messages
     if message.author.bot:
+        return
+
+    # -- DM handling (friend whitelist) --
+    if message.guild is None:
+        await _handle_dm(message)
         return
 
     content = message.content.strip().lower()
@@ -264,7 +389,7 @@ async def on_message(message: discord.Message):
     if content == "!practice":
         await message.channel.send("Im done with the practices.")
         logger.info(f"!practice triggered by {message.author}")
-        # IMPORTANT: no return — allow sticky logic to run
+        # IMPORTANT: no return -- allow sticky logic to run
 
     # ----------------------------------
     # STICKY CHANNEL ONLY

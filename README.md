@@ -240,8 +240,125 @@ those modules. Summary:
 - **Admin config / bans:** `/matchconfig`, `/resetconfig`, `/addcameraman`, `/removefromdb`, `/addtodb`
 - **Prospects:** `/addprospect`
 - **Utilities:** `/addfog`, `/showfog`, `/removefog`, `/killfeed`, `/test`, `/seederboard`, `/playercounts`, `/seedtrack`
+- **Whitelist:** `/link`, `/overwritelink`, `/unlink`, `/whitelist`, `/whiteliststatus`
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what each command and helper does.
+
+---
+
+## Whitelist system
+
+The whitelist system lets community members link their Steam or EOS ID to their
+Discord account, lets staff manually whitelist players, and lets qualifying
+members add friends via DMs. All data feeds into a single generated `Admins.cfg`
+file that the game server reads for permissions.
+
+### How it works
+
+1. **Linked IDs** — Any member runs `/link <steam_or_eos_id>` once to associate
+   their game identity with their Discord account. The link is **one-time**; to
+   change it the member must ask staff, who use `/overwritelink`.
+
+2. **Role-based groups** — Discord roles are mapped to Squad permission groups
+   via `WHITELIST_ROLE_GROUP_MAP`. When `Admins.cfg` is regenerated, each linked
+   member who still holds a mapped role gets an `Admin=` line in the
+   corresponding group. If a member loses the role, their entry is automatically
+   removed on the next refresh.
+
+3. **Manual whitelist** — Staff run `/whitelist <name> <id> <duration>` to add
+   anyone (even players not in the Discord) to a specific group. Entries can be
+   permanent or expire after a duration (e.g. `7d`, `30d`, `12h`). Expired
+   entries are pruned automatically.
+
+4. **Friend whitelist (DMs)** — Members with a friend-tier role can DM the bot
+   Steam/EOS IDs to add friends to the whitelist. The number of friend slots
+   depends on the member's highest tier role (configured via
+   `WHITELIST_FRIEND_TIERS`, e.g. 3, 5, or 10 slots). If the member loses
+   their tier role, all their friends are automatically removed.
+
+5. **Background sync** — A background task runs every `WHITELIST_REFRESH_INTERVAL`
+   seconds (default 300). It prunes expired entries, checks that role-based and
+   friend-based entries are still valid, regenerates `Admins.cfg`, and optionally
+   pushes it to the game server via SFTP.
+
+### Slash commands
+
+| Command | Who can use it | Description |
+| --- | --- | --- |
+| `/link <game_id>` | Everyone | Link your Steam ID (17 digits) or EOS ID (32 chars) to your Discord account. One-time use. |
+| `/overwritelink <member> <game_id>` | Staff | Set or overwrite any member's linked Steam/EOS ID. |
+| `/unlink <member>` | Staff | Remove a member's linked ID. |
+| `/whitelist <name> <game_id> [duration] [group]` | Staff | Manually whitelist a player. Duration examples: `7d`, `30d`, `12h`, `1d6h`. Omit for permanent. Group defaults to `WHITELIST_DEFAULT_GROUP`. |
+| `/whiteliststatus` | Everyone | Show your own linked ID. Staff also see the total whitelist entry count. |
+
+"Staff" means any member with a role listed in `WHITELIST_ALLOWED_ROLE_IDS`
+(falls back to `ALLOWED_ROLE_IDS` if not set).
+
+### DM commands (friend whitelist)
+
+Members with a qualifying friend-tier role can DM the bot directly:
+
+| DM message | Description |
+| --- | --- |
+| `<steam_or_eos_id> [label]` | Add a friend. The optional label is stored for reference. |
+| `!remove <steam_or_eos_id>` | Remove a friend from your list. |
+| `!friends` | List your current friends and remaining slots. |
+
+The bot responds with clear success/error messages including how many slots
+remain. If the member has no qualifying friend-tier role, the bot tells them.
+
+### Generated Admins.cfg format
+
+The output file is organized by group. Group headers appear first, then `Admin=`
+entries grouped together under their respective group:
+
+```
+Group=Donors:reserve
+Group=Cameraman:cameraman
+Group=Admin:balance,ban,cameraman,canseeadminchat,chat,forceteamchange,kick,teamchange,reserve
+Group=HeadAdmin:balance,ban,cameraman,canseeadminchat,changemap,chat,forceteamchange,pause,kick,teamchange,reserve,config
+Group=Moderator:canseeadminchat,reserve,chat,kick,teamchange,forceteamchange
+Group=ExpWL:reserve
+Group=Whitelisted:reserve
+
+Admin=76561198140219287:HeadAdmin // [20R] Grumps @grumpus.
+Admin=76561198041972329:HeadAdmin // [20R] Dash @dashoor
+Admin=76561198033778626:HeadAdmin // [20R] Gamoor @obamacare0626
+Admin=76561199243588806:Admin // [20R] Ali Nawar @ali
+Admin=76561197971371461:Admin // [20R] Legendary @odllegendary
+Admin=76561198974359243:Moderator // [20R] Sir._Captain_Sky_Walker @sky
+Admin=76561199803401091:Whitelisted // [20R] 20R Banzai @banzai
+Admin=76561198026181506:Whitelisted // [20R] Aekin @cedkin
+Admin=76561198124080679:ExpWL // [20R] -NSF- Spokels (added by Admin#1234)
+Admin=76561198374673266:ExpWL // antouan (friend of Grumps)
+```
+
+Entries come from three sources, all merged by group:
+- **Role-based**: linked IDs whose Discord member still holds a mapped role.
+- **Manual**: `/whitelist` entries (with optional expiry).
+- **Friends**: DM-submitted IDs under the default whitelist group.
+
+### Whitelist configuration reference
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `WHITELIST_ROLE_GROUP_MAP` | Yes | JSON mapping Discord role IDs to Squad group names, e.g. `{"123456": "Admin", "789012": "Moderator", "345678": "Whitelisted"}`. The order determines priority when a member has multiple mapped roles (first match wins). |
+| `WHITELIST_GROUP_PERMS` | Yes | JSON mapping Squad group names to their comma-separated permissions, e.g. `{"Admin": "balance,ban,cameraman,...", "Whitelisted": "reserve"}`. These become the `Group=` header lines in the output. |
+| `WHITELIST_ALLOWED_ROLE_IDS` | No | Comma-separated Discord role IDs allowed to use `/whitelist`, `/overwritelink`, and `/unlink`. Falls back to `ALLOWED_ROLE_IDS` when empty. |
+| `WHITELIST_DEFAULT_GROUP` | No (default `Whitelisted`) | The group assigned by `/whitelist` when no explicit group is given, and the group used for friend-whitelist entries. |
+| `WHITELIST_FRIEND_TIERS` | No (default `{}`) | JSON mapping Discord role IDs to the max number of friend slots, e.g. `{"111": 3, "222": 5, "333": 10}`. Members with multiple qualifying roles get the highest limit. |
+| `WHITELIST_TAG_PREFIX` | No (default empty) | Tag prefix added to `Admin=` comment lines for role-based entries, e.g. `20R` produces `[20R] PlayerName`. |
+| `WHITELIST_REFRESH_INTERVAL` | No (default `300`) | Seconds between background regeneration cycles. |
+| `WHITELIST_OUTPUT_PATH` | No (default `data/Admins.cfg`) | Local file path for the generated `Admins.cfg`. |
+| `WHITELIST_SFTP_REMOTE_PATH` | No (default empty) | Remote SFTP path to push the generated `Admins.cfg` to. Uses the main SFTP credentials (`SFTP_HOST`, etc.). Leave empty to skip SFTP push. |
+| `WHITELIST_DB_PATH` | No (default `data/whitelist.db`) | Path to the SQLite database storing linked IDs, whitelist entries, friends, and the audit log. |
+
+### Audit log
+
+Every mutation (link, unlink, overwrite, whitelist add, friend add/remove, and
+automatic purges) is recorded in the `whitelist_log` table of the SQLite
+database with a timestamp, action type, actor, target, and detail string. This
+log is append-only and is not automatically pruned.
 
 ## Security notes
 
