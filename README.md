@@ -137,7 +137,7 @@ Used to fetch and refresh the "Join" button link on the rotation message.
 | --- | --- | --- |
 | `JOIN_LINK_API_KEY` | Yes (for join link) | API key for the squad-browser join-link service. |
 | `JOIN_LINK_API_URL` | Yes (for join link) | Base URL of the join-link service. |
-| `JOIN_LINK_SERVER_NAME` | Yes (for join link) | Server name used to look up the join link. |
+| `JOIN_LINK_SERVER_NAME` | No (default empty) | Server name used to look up the join link. When set it is used verbatim and RCON is not queried; when empty the name is read from RCON (`ShowServerInfo`) on first use and cached for the process lifetime. Must match the name the squad-browser service sees, exactly. |
 | `JOIN_LINK_REFRESH_INTERVAL` | No (default `300`) | Seconds between join-link refreshes. |
 | `JOIN_LINK_RCON_HOST` | Yes (for join link) | RCON host used to read the live server name. |
 | `JOIN_LINK_RCON_PORT` | Yes (for join link) | RCON port. |

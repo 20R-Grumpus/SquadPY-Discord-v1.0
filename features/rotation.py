@@ -34,6 +34,7 @@ from config import (
     JOIN_LINK_API_KEY,
     JOIN_LINK_API_URL,
     JOIN_LINK_REFRESH_INTERVAL,
+    JOIN_LINK_SERVER_NAME,
     JOIN_LINK_RCON_HOST,
     JOIN_LINK_RCON_PORT,
     JOIN_LINK_RCON_PASSWORD,
@@ -461,6 +462,11 @@ async def get_server_name_rcon() -> str | None:
     if state.cached_server_name is not None:
         logger.info(f"Using cached server name: {state.cached_server_name}")
         return state.cached_server_name
+
+    if JOIN_LINK_SERVER_NAME:
+        logger.info(f"Using configured server name: {JOIN_LINK_SERVER_NAME}")
+        state.cached_server_name = JOIN_LINK_SERVER_NAME
+        return JOIN_LINK_SERVER_NAME
 
     if not JOIN_LINK_RCON_HOST or not JOIN_LINK_RCON_PASSWORD:
         logger.warning("RCON credentials not set")

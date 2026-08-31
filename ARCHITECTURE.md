@@ -146,7 +146,8 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
   with a join-link button.
 - `class RotationJoinView(discord.ui.View)` — view holding the join-link button.
 - `format_join_link(join_url) -> str | None` — formats a raw join URL.
-- `get_server_name_rcon() -> str | None` — fetches the current server name via RCON.
+- `get_server_name_rcon() -> str | None` — returns the configured
+  `JOIN_LINK_SERVER_NAME` if set, otherwise fetches the current server name via RCON.
 - `fetch_join_link_squadbrowser(server_name) -> str` — gets a join link from the
   squad browser API.
 - `rotation_join_link_updater()` — background loop that refreshes the join link.
