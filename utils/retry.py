@@ -4,8 +4,15 @@ import asyncio
 
 import aiohttp
 
-from config import logger, BATTLEMETRICS_SERVER_ID
+from config import logger, BATTLEMETRICS_API_KEY, BATTLEMETRICS_SERVER_ID
 from state import state
+
+
+def _battlemetrics_headers() -> dict[str, str]:
+    if not BATTLEMETRICS_API_KEY:
+        return {}
+
+    return {"Authorization": f"Bearer {BATTLEMETRICS_API_KEY}"}
 
 
 async def fetch_player_count():
@@ -15,9 +22,17 @@ async def fetch_player_count():
     logger.debug(f"Fetching player count from: {url}")
 
     try:
-        async with state.http_session.get(url) as response:
+        async with state.http_session.get(
+            url, headers=_battlemetrics_headers()
+        ) as response:
             if response.status != 200:
-                logger.warning(f"BattleMetrics API returned status {response.status}")
+                body = await response.text()
+                logger.warning(
+                    "BattleMetrics returned %s\nURL: %s\nBody: %s",
+                    response.status,
+                    url,
+                    body[:1000],
+                )
                 return None
 
             data = await response.json()
@@ -45,8 +60,19 @@ async def robust_fetch_player_count(server_id: str, retries=2):
 
     for attempt in range(1, retries + 1):
         try:
-            async with state.http_session.get(url) as resp:
+            async with state.http_session.get(
+                url, headers=_battlemetrics_headers()
+            ) as resp:
                 if resp.status != 200:
+                    body = await resp.text()
+                    logger.debug(
+                        "BattleMetrics returned %s (attempt %s/%s)\nURL: %s\nBody: %s",
+                        resp.status,
+                        attempt,
+                        retries,
+                        url,
+                        body[:1000],
+                    )
                     continue
 
                 data = await resp.json()
