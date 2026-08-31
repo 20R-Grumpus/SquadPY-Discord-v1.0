@@ -494,6 +494,7 @@ class ProspectView(View):
                     await interaction.channel.send(welcome_msg)
 
                     logger.info(f"Posted welcome message for {view.applicant}")
+                    logger.info(f"{welcome_msg}")
 
                     # Post announcement to prospect announcement channel
                     try:
