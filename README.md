@@ -108,6 +108,7 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | Variable | Required | Description |
 | --- | --- | --- |
 | `MAIN_BATTLEMETRICS_SERVER_ID` | Yes | BattleMetrics server ID used to read the main server's player count. |
+| `BATTLEMETRICS_API_KEY` | No (default empty) | BattleMetrics API token sent as `Authorization: Bearer …` on player-count requests. Blank means unauthenticated requests, which BattleMetrics rate-limits much more aggressively. |
 | `MILESTONE_STEP` | Yes | Step size for player-count milestones; milestones are `range(10, 70, MILESTONE_STEP)`. |
 | `CHECK_INTERVAL_SECONDS` | Yes | How often the monitor loop polls the player count. |
 | `LIVE_PLAYER_COUNT` | Yes | Player count at/above which the server is considered "live". |
