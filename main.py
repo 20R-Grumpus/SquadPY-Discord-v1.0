@@ -11,6 +11,7 @@ import commands.seeding_commands  # noqa: F401
 import commands.admin_commands  # noqa: F401
 import commands.prospect_commands  # noqa: F401
 import commands.util_commands  # noqa: F401
+import commands.whitelist_commands  # noqa: F401
 import events.handlers  # noqa: F401
 import events.startup  # noqa: F401
 
