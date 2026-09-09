@@ -29,14 +29,18 @@ def build_admins_cfg(steamids: list[str], role="Admin", comment="Match Config") 
 
 
 def get_latest_backup(server_region: str) -> Path:
-    pattern = BACKUP_DIR / f"*_{server_region}_Admins.cfg"
-    backups = list(pattern.parent.glob(pattern.name))
+    # SFTP backups use the server host in the filename, not the region label.
+    backups = list(BACKUP_DIR.glob("*_Admins.cfg"))
     if not backups:
         raise FileNotFoundError("No local backup found")
     return max(backups, key=os.path.getctime)
 
 
 def fetch_remote_list() -> str:
+    if not REMOTE_LIST_URL:
+        logger.error("Failed to fetch remote admin list: COMP_ADMIN_LIST_URL is empty")
+        return ""
+
     try:
         r = requests.get(REMOTE_LIST_URL, timeout=10)
         r.raise_for_status()
