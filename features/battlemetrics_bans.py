@@ -18,15 +18,13 @@ from config import (
 )
 
 from database import (
-    get_ban_by_id,
     get_all_bans,
     get_sync_state,
     set_sync_state,
-    upsert_ban,
+    bulk_upsert_battlemetrics_bans,
     bulk_import_battlemetrics_bans,
     mark_all_bans_not_seen,
     mark_ban_discord_posted,
-    mark_ban_discord_skipped,
     mark_ban_discord_deleted_posted,
     mark_ban_discord_snapshot_posted,
     push_active_bans_to_sftp,
@@ -875,53 +873,15 @@ async def sync_battlemetrics_bans():
     # determine what changed and which bans disappeared.
     previous_bans = {ban["ban_id"]: ban for ban in get_all_bans()}
 
-    seen_ban_ids = set()
-
     initialized = get_sync_state("battlemetrics_bans_initialized") == "true"
 
-    if not initialized:
-        bans = []
+    # ---------------------------------------------------------
+    # Normalize the complete BattleMetrics response first.
+    #
+    # No database writes happen during this loop.
+    # ---------------------------------------------------------
 
-        for raw_ban in raw_bans:
-            ban = normalize_ban(
-                raw_ban,
-                included_lookup,
-            )
-
-            if ban is None:
-                logger.warning("Skipping BattleMetrics ban with no ID")
-                continue
-
-            bans.append(ban)
-
-        logger.info(
-            "Performing BattleMetrics baseline import of %s bans",
-            len(bans),
-        )
-
-        bulk_import_battlemetrics_bans(bans)
-
-        mark_all_bans_not_seen()
-
-        set_sync_state(
-            "battlemetrics_bans_initialized",
-            "true",
-        )
-
-        logger.info(
-            "BattleMetrics ban database baseline initialization "
-            "complete. Imported %s historical bans without "
-            "creating Discord forum threads.",
-            len(bans),
-        )
-
-        return True
-
-    logger.info(
-        "Processing %s BattleMetrics bans " "(initial_sync=%s)",
-        len(raw_bans),
-        not initialized,
-    )
+    normalized_bans = []
 
     for raw_ban in raw_bans:
 
@@ -934,30 +894,65 @@ async def sync_battlemetrics_bans():
             logger.warning("Skipping BattleMetrics ban with no ID")
             continue
 
-        seen_ban_ids.add(ban["ban_id"])
+        normalized_bans.append(ban)
 
-        # ---------------------------------------------------------
-        # Get the OLD record before upsert overwrites it.
-        # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # FIRST EVER SYNC
+    #
+    # Import all existing/historical bans but do NOT create
+    # Discord forum threads for them.
+    # ---------------------------------------------------------
+
+    if not initialized:
+
+        logger.info(
+            "Performing BattleMetrics baseline import of %s bans",
+            len(normalized_bans),
+        )
+
+        bulk_import_battlemetrics_bans(normalized_bans)
+
+        mark_all_bans_not_seen()
+
+        set_sync_state(
+            "battlemetrics_bans_initialized",
+            "true",
+        )
+
+        logger.info(
+            "BattleMetrics ban database baseline initialization "
+            "complete. Imported %s historical bans without "
+            "creating Discord forum threads.",
+            len(normalized_bans),
+        )
+
+        return True
+
+    logger.info(
+        "Processing %s BattleMetrics bans " "(initial_sync=False)",
+        len(normalized_bans),
+    )
+
+    # ---------------------------------------------------------
+    # Prepare the set of IDs returned by BattleMetrics.
+    # ---------------------------------------------------------
+
+    seen_ban_ids = {ban["ban_id"] for ban in normalized_bans}
+
+    # ---------------------------------------------------------
+    # Legacy snapshot migration.
+    #
+    # Existing Discord threads created before snapshot tracking
+    # was added need their OLD database state saved before the
+    # bulk update overwrites the BattleMetrics fields.
+    # ---------------------------------------------------------
+
+    for ban in normalized_bans:
 
         previous = previous_bans.get(ban["ban_id"])
 
-        # ---------------------------------------------------------
-        # Legacy snapshot migration
-        #
-        # Existing Discord threads created before snapshot
-        # tracking was added do not have a saved snapshot.
-        #
-        # Save the OLD database state as the Discord baseline
-        # before upsert overwrites it with the current BM state.
-        #
-        # This also preserves the old state if the Discord update
-        # fails and must be retried on the next sync.
-        # ---------------------------------------------------------
-
         if (
-            initialized
-            and previous is not None
+            previous is not None
             and previous.get("discord_thread_id")
             and not previous.get("discord_last_posted_snapshot")
         ):
@@ -970,38 +965,37 @@ async def sync_battlemetrics_bans():
 
             previous["discord_last_posted_snapshot"] = snapshot
 
-        # ---------------------------------------------------------
-        # Save/update the BattleMetrics data.
-        #
-        # Discord failures must never prevent the database from
-        # receiving the latest BattleMetrics information.
-        # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # BULK DATABASE UPDATE
+    #
+    # This replaces thousands of individual SQLite
+    # connections/commits with ONE transaction.
+    #
+    # Discord state is preserved by the database function.
+    # ---------------------------------------------------------
 
-        upsert_ban(ban)
+    bulk_upsert_battlemetrics_bans(normalized_bans)
 
-        # ---------------------------------------------------------
-        # FIRST EVER SYNC
-        #
-        # Import all existing/historical bans but do NOT create
-        # Discord forum threads for them.
-        # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # Process Discord changes AFTER the database update.
+    #
+    # previous_bans still contains the OLD state, so all
+    # comparisons remain old -> new.
+    # ---------------------------------------------------------
 
-        if not initialized:
-            mark_ban_discord_skipped(ban["ban_id"])
-            mark_ban_discord_snapshot_posted(
-                ban["ban_id"],
-                _build_discord_snapshot(ban),
-            )
-            continue
+    for ban in normalized_bans:
 
-        # ---------------------------------------------------------
+        previous = previous_bans.get(ban["ban_id"])
+
+        # -----------------------------------------------------
         # EXISTING BAN WITH CHANGES
         #
         # Send changes to the existing evidence thread.
         #
-        # Simply reaching the expiration time does NOT appear here
-        # because _get_ban_changes() only compares BM data.
-        # ---------------------------------------------------------
+        # Simply reaching the expiration time does NOT appear
+        # here because _get_ban_changes() only compares the
+        # stored BattleMetrics data.
+        # -----------------------------------------------------
 
         if previous is not None and previous.get("discord_thread_id"):
 
@@ -1010,29 +1004,32 @@ async def sync_battlemetrics_bans():
             discord_baseline = _ban_from_discord_snapshot(snapshot)
 
             if discord_baseline is not None:
+
                 changes = _get_ban_changes(
                     discord_baseline,
                     ban,
                 )
 
                 if changes:
+
                     success = await post_ban_update(
                         previous["discord_thread_id"],
                         changes,
                     )
 
                     if success:
+
                         mark_ban_discord_snapshot_posted(
                             ban["ban_id"],
                             _build_discord_snapshot(ban),
                         )
 
-        # ---------------------------------------------------------
+        # -----------------------------------------------------
         # NEW BAN / PREVIOUSLY FAILED DISCORD POST
         #
         # If there is no Discord post yet, create the evidence
         # thread.
-        # ---------------------------------------------------------
+        # -----------------------------------------------------
 
         if previous is None or not previous["discord_posted"]:
 
@@ -1059,67 +1056,44 @@ async def sync_battlemetrics_bans():
                     ban["ban_id"],
                 )
 
-    # -------------------------------------------------------------
+    # ---------------------------------------------------------
     # The API request AND all pagination completed successfully.
     #
-    # Only NOW is it safe to mark records not returned by the API
-    # as no longer present in BattleMetrics.
-    # -------------------------------------------------------------
+    # Only NOW is it safe to mark records not returned by the
+    # API as no longer present in BattleMetrics.
+    # ---------------------------------------------------------
 
     mark_all_bans_not_seen()
 
-    # -------------------------------------------------------------
+    # ---------------------------------------------------------
     # Detect bans that disappeared from BattleMetrics.
     #
     # A deletion notice is only sent once successfully.
     # If Discord fails, the flag remains 0 and the next sync
     # retries the notification.
-    # -------------------------------------------------------------
+    # ---------------------------------------------------------
 
-    if initialized:
+    for ban_id, previous in previous_bans.items():
 
-        for ban_id, previous in previous_bans.items():
+        if ban_id in seen_ban_ids:
+            continue
 
-            if ban_id in seen_ban_ids:
-                continue
+        # Already absent during a previous sync.
+        if not previous.get("bm_present"):
+            continue
 
-            # Already absent during a previous sync.
-            if not previous.get("bm_present"):
-                continue
+        # No Discord evidence thread exists.
+        if not previous.get("discord_thread_id"):
+            continue
 
-            # No Discord evidence thread exists.
-            if not previous.get("discord_thread_id"):
-                continue
+        # Deletion notice already successfully posted.
+        if previous.get("discord_deleted_posted"):
+            continue
 
-            # Deletion notice already successfully posted.
-            if previous.get("discord_deleted_posted"):
-                continue
+        success = await post_ban_deleted(previous["discord_thread_id"])
 
-            success = await post_ban_deleted(previous["discord_thread_id"])
-
-            if success:
-                mark_ban_discord_deleted_posted(ban_id)
-
-    # -------------------------------------------------------------
-    # The first COMPLETE sync is now finished.
-    #
-    # This flag is stored in the database so that even an empty
-    # BattleMetrics ban list will not cause every future sync to
-    # be treated as the initial sync.
-    # -------------------------------------------------------------
-
-    if not initialized:
-
-        set_sync_state(
-            "battlemetrics_bans_initialized",
-            "true",
-        )
-
-        logger.info(
-            "BattleMetrics ban database baseline initialization "
-            "complete. Historical bans will not create Discord "
-            "forum threads."
-        )
+        if success:
+            mark_ban_discord_deleted_posted(ban_id)
 
     return True
 

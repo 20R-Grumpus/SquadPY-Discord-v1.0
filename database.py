@@ -360,6 +360,126 @@ def upsert_ban(ban):
         conn.close()
 
 
+def bulk_upsert_battlemetrics_bans(bans):
+    """
+    Update all BattleMetrics bans from a completed API sync
+    in one SQLite transaction.
+
+    This function updates BattleMetrics-owned fields while
+    preserving all Discord tracking fields.
+
+    Discord fields intentionally preserved:
+        - discord_thread_id
+        - discord_posted
+        - discord_deleted_posted
+        - discord_last_posted_snapshot
+    """
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn = get_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        for ban in bans:
+            cursor.execute(
+                """
+                INSERT INTO battlemetrics_bans (
+                    ban_id,
+                    uid,
+                    ban_list_id,
+                    player_id,
+                    player_name,
+                    steamid,
+                    eosid,
+                    server_id,
+                    organization_id,
+                    user_id,
+                    timestamp,
+                    expires,
+                    reason,
+                    note,
+                    org_wide,
+                    auto_add_enabled,
+                    native_enabled,
+                    discord_thread_id,
+                    discord_posted,
+                    discord_deleted_posted,
+                    discord_last_posted_snapshot,
+                    bm_present,
+                    last_seen_at,
+                    last_updated_at
+                )
+                VALUES (
+                    ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    NULL,
+                    0,
+                    0,
+                    NULL,
+                    1,
+                    ?, ?
+                )
+                ON CONFLICT(ban_id)
+                DO UPDATE SET
+                    uid = excluded.uid,
+                    ban_list_id = excluded.ban_list_id,
+                    player_id = excluded.player_id,
+                    player_name = excluded.player_name,
+                    steamid = excluded.steamid,
+                    eosid = excluded.eosid,
+                    server_id = excluded.server_id,
+                    organization_id = excluded.organization_id,
+                    user_id = excluded.user_id,
+                    timestamp = excluded.timestamp,
+                    expires = excluded.expires,
+                    reason = excluded.reason,
+                    note = excluded.note,
+                    org_wide = excluded.org_wide,
+                    auto_add_enabled = excluded.auto_add_enabled,
+                    native_enabled = excluded.native_enabled,
+                    bm_present = 1,
+                    last_seen_at = excluded.last_seen_at,
+                    last_updated_at = excluded.last_updated_at
+                """,
+                (
+                    ban["ban_id"],
+                    ban.get("uid"),
+                    ban["ban_list_id"],
+                    ban.get("player_id"),
+                    ban.get("player_name"),
+                    ban.get("steamid"),
+                    ban.get("eosid"),
+                    ban.get("server_id"),
+                    ban.get("organization_id"),
+                    ban.get("user_id"),
+                    ban.get("timestamp"),
+                    ban.get("expires"),
+                    ban.get("reason"),
+                    ban.get("note"),
+                    ban.get("org_wide"),
+                    ban.get("auto_add_enabled"),
+                    ban.get("native_enabled"),
+                    now,
+                    now,
+                ),
+            )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+
 def bulk_import_battlemetrics_bans(bans):
     """
     Import the complete first BattleMetrics baseline in one
