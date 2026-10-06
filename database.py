@@ -57,6 +57,8 @@ def init_battlemetrics_bans_db():
 
                 discord_thread_id TEXT,
                 discord_posted INTEGER NOT NULL DEFAULT 0,
+                discord_deleted_posted INTEGER NOT NULL DEFAULT 0,
+                discord_last_posted_snapshot TEXT,
 
                 bm_present INTEGER NOT NULL DEFAULT 1,
 
@@ -64,6 +66,46 @@ def init_battlemetrics_bans_db():
                 last_updated_at TEXT NOT NULL
             )
             """)
+
+        # ---------------------------------------------------------
+        # Database migration
+        #
+        # The database may already exist from the previous version.
+        # CREATE TABLE IF NOT EXISTS does not add new columns to an
+        # existing table, so check for the new column and add it if
+        # necessary.
+        # ---------------------------------------------------------
+
+        cursor.execute("""
+            PRAGMA table_info(battlemetrics_bans)
+            """)
+
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "discord_deleted_posted" not in columns:
+            cursor.execute("""
+                ALTER TABLE battlemetrics_bans
+                ADD COLUMN discord_deleted_posted
+                INTEGER NOT NULL DEFAULT 0
+                """)
+
+            logger.info(
+                "Added discord_deleted_posted column to BattleMetrics bans database"
+            )
+
+            columns.add("discord_deleted_posted")
+
+        if "discord_last_posted_snapshot" not in columns:
+            cursor.execute("""
+                ALTER TABLE battlemetrics_bans
+                ADD COLUMN discord_last_posted_snapshot TEXT
+                """)
+
+            logger.info(
+                "Added discord_last_posted_snapshot column to BattleMetrics bans database"
+            )
+
+            columns.add("discord_last_posted_snapshot")
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_bans_steamid
@@ -237,6 +279,8 @@ def upsert_ban(ban):
 
                 discord_thread_id,
                 discord_posted,
+                discord_deleted_posted,
+                discord_last_posted_snapshot,
 
                 bm_present,
 
@@ -252,6 +296,8 @@ def upsert_ban(ban):
                 ?, ?, ?,
                 NULL,
                 0,
+                0,
+                NULL,
                 1,
                 ?, ?
             )
@@ -317,6 +363,7 @@ def upsert_ban(ban):
 def mark_all_bans_not_seen():
     """
     Called only after a COMPLETE successful BattleMetrics sync.
+
     Historical records remain in the database.
     """
     conn = get_connection()
@@ -358,6 +405,31 @@ def mark_ban_discord_posted(ban_id, thread_id):
         conn.close()
 
 
+def mark_ban_discord_snapshot_posted(ban_id, snapshot):
+    """
+    Save the BattleMetrics ban state that was successfully posted
+    to the Discord evidence thread.
+    """
+    conn = get_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE battlemetrics_bans
+            SET discord_last_posted_snapshot = ?
+            WHERE ban_id = ?
+            """,
+            (snapshot, str(ban_id)),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
 def mark_ban_discord_skipped(ban_id):
     """
     Used during the first baseline sync.
@@ -374,6 +446,31 @@ def mark_ban_discord_skipped(ban_id):
             """
             UPDATE battlemetrics_bans
             SET discord_posted = 1
+            WHERE ban_id = ?
+            """,
+            (str(ban_id),),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+def mark_ban_discord_deleted_posted(ban_id):
+    """
+    Mark the BattleMetrics deletion notification as successfully
+    posted to the existing Discord evidence thread.
+    """
+    conn = get_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE battlemetrics_bans
+            SET discord_deleted_posted = 1
             WHERE ban_id = ?
             """,
             (str(ban_id),),

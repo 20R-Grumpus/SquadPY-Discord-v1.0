@@ -1,8 +1,10 @@
 """BattleMetrics ban synchronization and Discord forum integration."""
 
 import asyncio
+import json
 import re
 import unicodedata
+from datetime import datetime
 
 import discord
 
@@ -17,12 +19,15 @@ from config import (
 
 from database import (
     get_ban_by_id,
+    get_all_bans,
     get_sync_state,
     set_sync_state,
     upsert_ban,
     mark_all_bans_not_seen,
     mark_ban_discord_posted,
     mark_ban_discord_skipped,
+    mark_ban_discord_deleted_posted,
+    mark_ban_discord_snapshot_posted,
     push_active_bans_to_sftp,
 )
 
@@ -146,7 +151,10 @@ def normalize_ban(raw_ban, included_lookup):
             if not identifier_type:
                 continue
 
-            if not steamid and identifier_type in ("steamid", "steam"):
+            if not steamid and identifier_type in (
+                "steamid",
+                "steam",
+            ):
                 steamid = value
 
             elif not eosid and identifier_type in (
@@ -190,7 +198,7 @@ def normalize_ban(raw_ban, included_lookup):
         "native_enabled": (
             1
             if attributes.get("nativeEnabled")
-            else 0 if attributes.get("nativeEnabled") is not None else None
+            else (0 if attributes.get("nativeEnabled") is not None else None)
         ),
     }
 
@@ -399,6 +407,369 @@ def build_ban_embed(ban):
     return embed
 
 
+def _parse_ban_expiration(value):
+    """
+    Convert a BattleMetrics expiration timestamp to a datetime
+    that can be compared with another expiration timestamp.
+
+    Returns None for permanent/unknown expirations.
+    """
+
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_discord_snapshot(ban):
+    """
+    Build a stable representation of the BattleMetrics data
+    that is reflected in the Discord evidence thread.
+    """
+
+    return json.dumps(
+        {
+            "expires": ban.get("expires"),
+            "reason": ban.get("reason"),
+            "note": ban.get("note"),
+            "player_name": ban.get("player_name"),
+            "server_id": ban.get("server_id"),
+            "user_id": ban.get("user_id"),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def _ban_from_discord_snapshot(snapshot):
+    """
+    Convert a saved Discord snapshot back into a dictionary.
+
+    Returns None if the snapshot is missing or invalid.
+    """
+
+    if not snapshot:
+        return None
+
+    try:
+        data = json.loads(snapshot)
+
+        if not isinstance(data, dict):
+            return None
+
+        return data
+
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _get_ban_changes(old_ban, new_ban):
+    """
+    Compare the previous database version of a ban against the
+    newly fetched BattleMetrics version.
+
+    Reaching the expiration date is intentionally NOT treated as
+    a change. A Discord message is only generated when
+    BattleMetrics changes the stored ban data.
+    """
+
+    if old_ban is None:
+        return []
+
+    changes = []
+
+    old_expires = old_ban.get("expires")
+    new_expires = new_ban.get("expires")
+
+    if old_expires != new_expires:
+
+        old_expiration = _parse_ban_expiration(old_expires)
+
+        new_expiration = _parse_ban_expiration(new_expires)
+
+        if old_expiration and new_expiration:
+
+            if new_expiration > old_expiration:
+                change_type = "extended"
+
+            elif new_expiration < old_expiration:
+                change_type = "reduced"
+
+            else:
+                change_type = "updated"
+
+        elif not old_expiration and new_expiration:
+            change_type = "expiration_added"
+
+        elif old_expiration and not new_expiration:
+            change_type = "permanent"
+
+        else:
+            change_type = "updated"
+
+        changes.append(
+            {
+                "type": change_type,
+                "old": old_expires or "Permanent",
+                "new": new_expires or "Permanent",
+            }
+        )
+
+    if old_ban.get("reason") != new_ban.get("reason"):
+        changes.append(
+            {
+                "type": "reason",
+                "old": old_ban.get("reason") or "None",
+                "new": new_ban.get("reason") or "None",
+            }
+        )
+
+    if old_ban.get("note") != new_ban.get("note"):
+        changes.append(
+            {
+                "type": "note",
+                "old": old_ban.get("note") or "None",
+                "new": new_ban.get("note") or "None",
+            }
+        )
+
+    if old_ban.get("player_name") != new_ban.get("player_name"):
+        changes.append(
+            {
+                "type": "player_name",
+                "old": (old_ban.get("player_name") or "Unknown"),
+                "new": (new_ban.get("player_name") or "Unknown"),
+            }
+        )
+
+    if old_ban.get("server_id") != new_ban.get("server_id"):
+        changes.append(
+            {
+                "type": "server",
+                "old": (old_ban.get("server_id") or "None"),
+                "new": (new_ban.get("server_id") or "None"),
+            }
+        )
+
+    if old_ban.get("user_id") != new_ban.get("user_id"):
+        changes.append(
+            {
+                "type": "moderator",
+                "old": (old_ban.get("user_id") or "Unknown"),
+                "new": (new_ban.get("user_id") or "Unknown"),
+            }
+        )
+
+    return changes
+
+
+def _format_ban_change(change):
+    change_type = change["type"]
+
+    if change_type == "extended":
+        return (
+            "⏩ **BattleMetrics Ban Extended**\n"
+            f"Expiration: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "reduced":
+        return (
+            "⏪ **BattleMetrics Ban Reduced**\n"
+            f"Expiration: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "expiration_added":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Expiration: `Permanent` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "permanent":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Expiration: `{change['old']}` → "
+            f"`Permanent`"
+        )
+
+    if change_type == "reason":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Reason: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "note":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Note: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "player_name":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Player name: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "server":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Server: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "moderator":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Moderator: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    return "🔄 **BattleMetrics Ban Updated**\n" f"`{change['old']}` → `{change['new']}`"
+
+
+async def post_ban_update(thread_id, changes):
+    """
+    Post BattleMetrics changes to the existing Discord ban
+    evidence thread.
+
+    Returns True on success, False on failure.
+    """
+
+    if not thread_id or not changes:
+        return False
+
+    try:
+        thread_id = int(thread_id)
+    except (ValueError, TypeError):
+        logger.error(
+            "Invalid Discord ban evidence thread ID: %s",
+            thread_id,
+        )
+        return False
+
+    thread = client.get_channel(thread_id)
+
+    if thread is None:
+        try:
+            thread = await client.fetch_channel(thread_id)
+
+        except Exception:
+            logger.exception(
+                "Could not find Discord ban evidence thread %s",
+                thread_id,
+            )
+
+            return False
+
+    try:
+        messages = [_format_ban_change(change) for change in changes]
+
+        await thread.send("\n\n".join(messages))
+
+        logger.info(
+            "Posted %s BattleMetrics change(s) to Discord " "thread %s",
+            len(changes),
+            thread_id,
+        )
+
+        return True
+
+    except discord.HTTPException as e:
+        logger.error(
+            "Failed to post BattleMetrics update to Discord " "thread %s. HTTP %s: %s",
+            thread_id,
+            e.status,
+            e,
+        )
+
+        return False
+
+    except Exception:
+        logger.exception(
+            "Unexpected error posting BattleMetrics update " "to Discord thread %s",
+            thread_id,
+        )
+
+        return False
+
+
+async def post_ban_deleted(thread_id):
+    """
+    Post a deletion notice to the existing Discord ban evidence
+    thread.
+
+    Returns True on success, False on failure.
+    """
+
+    if not thread_id:
+        return False
+
+    try:
+        thread_id = int(thread_id)
+    except (ValueError, TypeError):
+        logger.error(
+            "Invalid Discord ban evidence thread ID for deletion: %s",
+            thread_id,
+        )
+        return False
+
+    thread = client.get_channel(thread_id)
+
+    if thread is None:
+        try:
+            thread = await client.fetch_channel(thread_id)
+
+        except Exception:
+            logger.exception(
+                "Could not find Discord ban evidence thread %s " "for deletion notice",
+                thread_id,
+            )
+
+            return False
+
+    try:
+        await thread.send(
+            "🗑️ **BattleMetrics Ban Deleted**\n\n"
+            "This ban was removed from BattleMetrics."
+        )
+
+        logger.info(
+            "Posted BattleMetrics ban deletion notice to " "Discord thread %s",
+            thread_id,
+        )
+
+        return True
+
+    except discord.HTTPException as e:
+        logger.error(
+            "Failed to post BattleMetrics deletion notice "
+            "to Discord thread %s. HTTP %s: %s",
+            thread_id,
+            e.status,
+            e,
+        )
+
+        return False
+
+    except Exception:
+        logger.exception(
+            "Unexpected error posting BattleMetrics deletion "
+            "notice to Discord thread %s",
+            thread_id,
+        )
+
+        return False
+
+
 async def create_ban_forum_post(ban):
     """
     Create the Discord forum thread for a ban.
@@ -485,8 +856,6 @@ async def sync_battlemetrics_bans():
         False = synchronization failed
     """
 
-    from utils.retry import fetch_battlemetrics_bans
-
     payload = await fetch_battlemetrics_bans()
 
     if payload is None:
@@ -501,6 +870,12 @@ async def sync_battlemetrics_bans():
 
     included_lookup = _build_included_lookup(included)
 
+    # Keep the database state from BEFORE this sync so we can
+    # determine what changed and which bans disappeared.
+    previous_bans = {ban["ban_id"]: ban for ban in get_all_bans()}
+
+    seen_ban_ids = set()
+
     initialized = get_sync_state("battlemetrics_bans_initialized") == "true"
 
     logger.info(
@@ -508,13 +883,6 @@ async def sync_battlemetrics_bans():
         len(raw_bans),
         not initialized,
     )
-
-    # The API request and all pagination completed successfully,
-    # so it is now safe to mark everything as not currently present.
-    #
-    # Bans returned by this sync will be changed back to bm_present=1
-    # by upsert_ban().
-    mark_all_bans_not_seen()
 
     for raw_ban in raw_bans:
 
@@ -527,14 +895,50 @@ async def sync_battlemetrics_bans():
             logger.warning("Skipping BattleMetrics ban with no ID")
             continue
 
+        seen_ban_ids.add(ban["ban_id"])
+
         # ---------------------------------------------------------
-        # Save/update the ban FIRST.
-        #
-        # This is important because a Discord failure must never
-        # cause us to lose the BattleMetrics ban.
+        # Get the OLD record before upsert overwrites it.
         # ---------------------------------------------------------
 
-        was_inserted = upsert_ban(ban)
+        previous = previous_bans.get(ban["ban_id"])
+
+        # ---------------------------------------------------------
+        # Legacy snapshot migration
+        #
+        # Existing Discord threads created before snapshot
+        # tracking was added do not have a saved snapshot.
+        #
+        # Save the OLD database state as the Discord baseline
+        # before upsert overwrites it with the current BM state.
+        #
+        # This also preserves the old state if the Discord update
+        # fails and must be retried on the next sync.
+        # ---------------------------------------------------------
+
+        if (
+            initialized
+            and previous is not None
+            and previous.get("discord_thread_id")
+            and not previous.get("discord_last_posted_snapshot")
+        ):
+            snapshot = _build_discord_snapshot(previous)
+
+            mark_ban_discord_snapshot_posted(
+                ban["ban_id"],
+                snapshot,
+            )
+
+            previous["discord_last_posted_snapshot"] = snapshot
+
+        # ---------------------------------------------------------
+        # Save/update the BattleMetrics data.
+        #
+        # Discord failures must never prevent the database from
+        # receiving the latest BattleMetrics information.
+        # ---------------------------------------------------------
+
+        upsert_ban(ban)
 
         # ---------------------------------------------------------
         # FIRST EVER SYNC
@@ -544,23 +948,51 @@ async def sync_battlemetrics_bans():
         # ---------------------------------------------------------
 
         if not initialized:
-
             mark_ban_discord_skipped(ban["ban_id"])
-
+            mark_ban_discord_snapshot_posted(
+                ban["ban_id"],
+                _build_discord_snapshot(ban),
+            )
             continue
 
         # ---------------------------------------------------------
-        # SUBSEQUENT SYNCS
+        # EXISTING BAN WITH CHANGES
         #
-        # Check the database after the upsert so we get the current
-        # discord_posted state.
+        # Send changes to the existing evidence thread.
         #
-        # If discord_posted == 0, this is either:
+        # Simply reaching the expiration time does NOT appear here
+        # because _get_ban_changes() only compares BM data.
+        # ---------------------------------------------------------
+
+        if previous is not None and previous.get("discord_thread_id"):
+
+            snapshot = previous.get("discord_last_posted_snapshot")
+
+            discord_baseline = _ban_from_discord_snapshot(snapshot)
+
+            if discord_baseline is not None:
+                changes = _get_ban_changes(
+                    discord_baseline,
+                    ban,
+                )
+
+                if changes:
+                    success = await post_ban_update(
+                        previous["discord_thread_id"],
+                        changes,
+                    )
+
+                    if success:
+                        mark_ban_discord_snapshot_posted(
+                            ban["ban_id"],
+                            _build_discord_snapshot(ban),
+                        )
+
+        # ---------------------------------------------------------
+        # NEW BAN / PREVIOUSLY FAILED DISCORD POST
         #
-        #   1. A brand-new ban
-        #   2. A previous forum-post attempt failed
-        #
-        # In either case, try to create the forum post.
+        # If there is no Discord post yet, create the evidence
+        # thread.
         # ---------------------------------------------------------
 
         current = get_ban_by_id(ban["ban_id"])
@@ -584,6 +1016,11 @@ async def sync_battlemetrics_bans():
                     thread.id,
                 )
 
+                mark_ban_discord_snapshot_posted(
+                    ban["ban_id"],
+                    _build_discord_snapshot(ban),
+                )
+
             else:
 
                 logger.warning(
@@ -592,6 +1029,47 @@ async def sync_battlemetrics_bans():
                     "on the next sync.",
                     ban["ban_id"],
                 )
+
+    # -------------------------------------------------------------
+    # The API request AND all pagination completed successfully.
+    #
+    # Only NOW is it safe to mark records not returned by the API
+    # as no longer present in BattleMetrics.
+    # -------------------------------------------------------------
+
+    mark_all_bans_not_seen()
+
+    # -------------------------------------------------------------
+    # Detect bans that disappeared from BattleMetrics.
+    #
+    # A deletion notice is only sent once successfully.
+    # If Discord fails, the flag remains 0 and the next sync
+    # retries the notification.
+    # -------------------------------------------------------------
+
+    if initialized:
+
+        for ban_id, previous in previous_bans.items():
+
+            if ban_id in seen_ban_ids:
+                continue
+
+            # Already absent during a previous sync.
+            if not previous.get("bm_present"):
+                continue
+
+            # No Discord evidence thread exists.
+            if not previous.get("discord_thread_id"):
+                continue
+
+            # Deletion notice already successfully posted.
+            if previous.get("discord_deleted_posted"):
+                continue
+
+            success = await post_ban_deleted(previous["discord_thread_id"])
+
+            if success:
+                mark_ban_discord_deleted_posted(ban_id)
 
     # -------------------------------------------------------------
     # The first COMPLETE sync is now finished.
