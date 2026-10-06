@@ -699,10 +699,10 @@ async def push_active_bans_to_sftp():
 
     try:
         await sftp_write_content(
-            host=SQUADJS_SFTP_HOST,
-            port=SQUADJS_SFTP_PORT,
-            username=SQUADJS_SFTP_USER,
-            password=SQUADJS_SFTP_PASSWORD,
+            sftp_host=SQUADJS_SFTP_HOST,
+            sftp_port=SQUADJS_SFTP_PORT,
+            sftp_user=SQUADJS_SFTP_USER,
+            sftp_password=SQUADJS_SFTP_PASSWORD,
             remote_path=SQUADJS_SFTP_BANNED_PLAYERS_PATH,
             content=content,
         )
