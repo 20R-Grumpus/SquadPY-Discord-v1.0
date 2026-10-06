@@ -2,25 +2,17 @@
 
 import re
 import asyncio
-import sqlite3
 
 import discord
 
 from config import (
     logger,
-    FORUM_CHANNEL_ID,
     STICKY_CHANNEL_ID,
     STICKY_PING_ROLE_ID,
     STICKY_TICKET_CHANNEL_ID,
-    BANNED_PLAYERS_DB_PATH,
 )
 from state import state, get_state, update_state
 from bot import client
-from database import (
-    load_banned_players,
-    find_player_by_steamid,
-    push_banned_players_to_sftp,
-)
 
 # --- Sticky Info Message Feature ---
 
