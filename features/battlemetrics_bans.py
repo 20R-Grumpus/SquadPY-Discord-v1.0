@@ -543,7 +543,7 @@ async def sync_battlemetrics_bans():
         # Discord forum threads for them.
         # ---------------------------------------------------------
 
-        if not initialized and was_inserted:
+        if not initialized:
 
             mark_ban_discord_skipped(ban["ban_id"])
 
