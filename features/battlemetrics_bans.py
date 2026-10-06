@@ -23,6 +23,7 @@ from database import (
     get_sync_state,
     set_sync_state,
     upsert_ban,
+    bulk_import_battlemetrics_bans,
     mark_all_bans_not_seen,
     mark_ban_discord_posted,
     mark_ban_discord_skipped,
@@ -877,6 +878,44 @@ async def sync_battlemetrics_bans():
     seen_ban_ids = set()
 
     initialized = get_sync_state("battlemetrics_bans_initialized") == "true"
+
+    if not initialized:
+        bans = []
+
+        for raw_ban in raw_bans:
+            ban = normalize_ban(
+                raw_ban,
+                included_lookup,
+            )
+
+            if ban is None:
+                logger.warning("Skipping BattleMetrics ban with no ID")
+                continue
+
+            bans.append(ban)
+
+        logger.info(
+            "Performing BattleMetrics baseline import of %s bans",
+            len(bans),
+        )
+
+        bulk_import_battlemetrics_bans(bans)
+
+        mark_all_bans_not_seen()
+
+        set_sync_state(
+            "battlemetrics_bans_initialized",
+            "true",
+        )
+
+        logger.info(
+            "BattleMetrics ban database baseline initialization "
+            "complete. Imported %s historical bans without "
+            "creating Discord forum threads.",
+            len(bans),
+        )
+
+        return True
 
     logger.info(
         "Processing %s BattleMetrics bans " "(initial_sync=%s)",

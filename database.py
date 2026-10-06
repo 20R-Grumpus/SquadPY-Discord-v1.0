@@ -360,6 +360,137 @@ def upsert_ban(ban):
         conn.close()
 
 
+def bulk_import_battlemetrics_bans(bans):
+    """
+    Import the complete first BattleMetrics baseline in one
+    SQLite transaction.
+
+    Historical bans are marked as Discord-skipped and their
+    current BattleMetrics state is saved as the Discord baseline.
+    No Discord forum threads are created.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn = get_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        for ban in bans:
+            snapshot = json.dumps(
+                {
+                    "expires": ban.get("expires"),
+                    "reason": ban.get("reason"),
+                    "note": ban.get("note"),
+                    "player_name": ban.get("player_name"),
+                    "server_id": ban.get("server_id"),
+                    "user_id": ban.get("user_id"),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO battlemetrics_bans (
+                    ban_id,
+                    uid,
+                    ban_list_id,
+                    player_id,
+                    player_name,
+                    steamid,
+                    eosid,
+                    server_id,
+                    organization_id,
+                    user_id,
+                    timestamp,
+                    expires,
+                    reason,
+                    note,
+                    org_wide,
+                    auto_add_enabled,
+                    native_enabled,
+                    discord_thread_id,
+                    discord_posted,
+                    discord_deleted_posted,
+                    discord_last_posted_snapshot,
+                    bm_present,
+                    last_seen_at,
+                    last_updated_at
+                )
+                VALUES (
+                    ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    NULL,
+                    1,
+                    0,
+                    ?,
+                    1,
+                    ?, ?
+                )
+                ON CONFLICT(ban_id)
+                DO UPDATE SET
+                    uid = excluded.uid,
+                    ban_list_id = excluded.ban_list_id,
+                    player_id = excluded.player_id,
+                    player_name = excluded.player_name,
+                    steamid = excluded.steamid,
+                    eosid = excluded.eosid,
+                    server_id = excluded.server_id,
+                    organization_id = excluded.organization_id,
+                    user_id = excluded.user_id,
+                    timestamp = excluded.timestamp,
+                    expires = excluded.expires,
+                    reason = excluded.reason,
+                    note = excluded.note,
+                    org_wide = excluded.org_wide,
+                    auto_add_enabled = excluded.auto_add_enabled,
+                    native_enabled = excluded.native_enabled,
+                    discord_posted = 1,
+                    discord_deleted_posted = 0,
+                    discord_last_posted_snapshot = excluded.discord_last_posted_snapshot,
+                    bm_present = 1,
+                    last_seen_at = excluded.last_seen_at,
+                    last_updated_at = excluded.last_updated_at
+                """,
+                (
+                    ban["ban_id"],
+                    ban.get("uid"),
+                    ban["ban_list_id"],
+                    ban.get("player_id"),
+                    ban.get("player_name"),
+                    ban.get("steamid"),
+                    ban.get("eosid"),
+                    ban.get("server_id"),
+                    ban.get("organization_id"),
+                    ban.get("user_id"),
+                    ban.get("timestamp"),
+                    ban.get("expires"),
+                    ban.get("reason"),
+                    ban.get("note"),
+                    ban.get("org_wide"),
+                    ban.get("auto_add_enabled"),
+                    ban.get("native_enabled"),
+                    snapshot,
+                    now,
+                    now,
+                ),
+            )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+
 def mark_all_bans_not_seen():
     """
     Called only after a COMPLETE successful BattleMetrics sync.
