@@ -110,143 +110,143 @@ def extract_ban_info_from_embed(embed: discord.Embed) -> dict | None:
 state.LAST_STICKY_MESSAGE_ID = load_sticky_state()
 
 
-@client.event
-async def on_thread_create(thread: discord.Thread):
-    """Listen for new forum posts in the ban evidence forum channel"""
-    try:
-        # Only listen to the specified forum channel
-        if thread.parent.id != FORUM_CHANNEL_ID:
-            return
+# @client.event
+# async def on_thread_create(thread: discord.Thread):
+#     """Listen for new forum posts in the ban evidence forum channel"""
+#     try:
+#         # Only listen to the specified forum channel
+#         if thread.parent.id != FORUM_CHANNEL_ID:
+#             return
 
-        logger.info(f"New forum post detected: '{thread.name}' in {thread.parent.name}")
+#         logger.info(f"New forum post detected: '{thread.name}' in {thread.parent.name}")
 
-        # Extract SteamID from thread title
-        steamid = extract_steamid_from_title(thread.name)
-        if not steamid:
-            logger.warning(f"No SteamID found in thread title: {thread.name}")
-            return
+#         # Extract SteamID from thread title
+#         steamid = extract_steamid_from_title(thread.name)
+#         if not steamid:
+#             logger.warning(f"No SteamID found in thread title: {thread.name}")
+#             return
 
-        logger.info(f"Extracted SteamID from title: {steamid}")
+#         logger.info(f"Extracted SteamID from title: {steamid}")
 
-        # Wait a moment for the ban information embed to be posted
-        await asyncio.sleep(1)
+#         # Wait a moment for the ban information embed to be posted
+#         await asyncio.sleep(1)
 
-        # Load current banned players list
-        banned_list = load_banned_players()
+#         # Load current banned players list
+#         banned_list = load_banned_players()
 
-        # Try to extract detailed info from embeds in the thread
-        player_info = {"steamid": steamid}  # Start with steamid from title
+#         # Try to extract detailed info from embeds in the thread
+#         player_info = {"steamid": steamid}  # Start with steamid from title
 
-        try:
-            # Fetch recent messages in the thread to find the ban embed
-            async for message in thread.history(limit=10):
-                if message.embeds and len(message.embeds) > 0:
-                    for embed in message.embeds:
-                        extracted = extract_ban_info_from_embed(embed)
-                        if extracted:
-                            player_info.update(extracted)
-                            break
-                    if len(player_info) > 1:  # Found more than just steamid
-                        break
-        except Exception as e:
-            logger.warning(f"Could not fetch embed details: {e}")
-            # Continue with just steamid if embed parsing fails
+#         try:
+#             # Fetch recent messages in the thread to find the ban embed
+#             async for message in thread.history(limit=10):
+#                 if message.embeds and len(message.embeds) > 0:
+#                     for embed in message.embeds:
+#                         extracted = extract_ban_info_from_embed(embed)
+#                         if extracted:
+#                             player_info.update(extracted)
+#                             break
+#                     if len(player_info) > 1:  # Found more than just steamid
+#                         break
+#         except Exception as e:
+#             logger.warning(f"Could not fetch embed details: {e}")
+#             # Continue with just steamid if embed parsing fails
 
-        # Check if player already exists
-        player_lookup = find_player_by_steamid(banned_list, steamid)
-        updated = False
+#         # Check if player already exists
+#         player_lookup = find_player_by_steamid(banned_list, steamid)
+#         updated = False
 
-        if player_lookup:
-            # Player exists, merge new data
-            existing_player = player_lookup
-            new_fields = []
+#         if player_lookup:
+#             # Player exists, merge new data
+#             existing_player = player_lookup
+#             new_fields = []
 
-            try:
-                conn = sqlite3.connect(BANNED_PLAYERS_DB_PATH)
-                cursor = conn.cursor()
+#             try:
+#                 conn = sqlite3.connect(BANNED_PLAYERS_DB_PATH)
+#                 cursor = conn.cursor()
 
-                # Update with new fields from player_info
-                for key, value in player_info.items():
-                    if key not in existing_player and value:  # Only add if not present
-                        if key == "eosid":
-                            cursor.execute(
-                                "UPDATE banned_players SET eosid = ? WHERE steamid = ?",
-                                (value, steamid),
-                            )
-                            new_fields.append(f"{key}: {value}")
-                            updated = True
-                        elif key == "name":
-                            cursor.execute(
-                                "UPDATE banned_players SET name = ? WHERE steamid = ?",
-                                (value, steamid),
-                            )
-                            new_fields.append(f"{key}: {value}")
-                            updated = True
+#                 # Update with new fields from player_info
+#                 for key, value in player_info.items():
+#                     if key not in existing_player and value:  # Only add if not present
+#                         if key == "eosid":
+#                             cursor.execute(
+#                                 "UPDATE banned_players SET eosid = ? WHERE steamid = ?",
+#                                 (value, steamid),
+#                             )
+#                             new_fields.append(f"{key}: {value}")
+#                             updated = True
+#                         elif key == "name":
+#                             cursor.execute(
+#                                 "UPDATE banned_players SET name = ? WHERE steamid = ?",
+#                                 (value, steamid),
+#                             )
+#                             new_fields.append(f"{key}: {value}")
+#                             updated = True
 
-                if updated:
-                    conn.commit()
-                    logger.info(
-                        f"Updated SteamID {steamid} with new fields: {new_fields}"
-                    )
-                    # Push if data was updated
-                    await push_banned_players_to_sftp()
+#                 if updated:
+#                     conn.commit()
+#                     logger.info(
+#                         f"Updated SteamID {steamid} with new fields: {new_fields}"
+#                     )
+#                     # Push if data was updated
+#                     await push_banned_players_to_sftp()
 
-                    response_msg = f"✅ Updated ban evidence database with new info:"
-                    for field in new_fields:
-                        response_msg += f"\n• **{field}**"
-                    await thread.send(response_msg)
-                else:
-                    logger.info(
-                        f"SteamID {steamid} already in database with all current data"
-                    )
-                    await thread.send(
-                        f"ℹ️ SteamID `{steamid}` already in database with all available info"
-                    )
-                conn.close()
-            except Exception as e:
-                logger.error(f"Error updating player in database: {e}")
-                await thread.send(f"❌ Error updating database: {str(e)}")
-        else:
-            # New player, add to database
-            try:
-                conn = sqlite3.connect(BANNED_PLAYERS_DB_PATH)
-                cursor = conn.cursor()
+#                     response_msg = f"✅ Updated ban evidence database with new info:"
+#                     for field in new_fields:
+#                         response_msg += f"\n• **{field}**"
+#                     await thread.send(response_msg)
+#                 else:
+#                     logger.info(
+#                         f"SteamID {steamid} already in database with all current data"
+#                     )
+#                     await thread.send(
+#                         f"ℹ️ SteamID `{steamid}` already in database with all available info"
+#                     )
+#                 conn.close()
+#             except Exception as e:
+#                 logger.error(f"Error updating player in database: {e}")
+#                 await thread.send(f"❌ Error updating database: {str(e)}")
+#         else:
+#             # New player, add to database
+#             try:
+#                 conn = sqlite3.connect(BANNED_PLAYERS_DB_PATH)
+#                 cursor = conn.cursor()
 
-                name = player_info.get("name", "Unknown")
-                eosid = player_info.get("eosid")
+#                 name = player_info.get("name", "Unknown")
+#                 eosid = player_info.get("eosid")
 
-                cursor.execute(
-                    "INSERT INTO banned_players (name, steamid, eosid) VALUES (?, ?, ?)",
-                    (name, steamid, eosid),
-                )
-                conn.commit()
-                conn.close()
+#                 cursor.execute(
+#                     "INSERT INTO banned_players (name, steamid, eosid) VALUES (?, ?, ?)",
+#                     (name, steamid, eosid),
+#                 )
+#                 conn.commit()
+#                 conn.close()
 
-                logger.info(f"Added player to banned players database: {player_info}")
+#                 logger.info(f"Added player to banned players database: {player_info}")
 
-                # Push to SFTP
-                await push_banned_players_to_sftp()
+#                 # Push to SFTP
+#                 await push_banned_players_to_sftp()
 
-                # Format response message
-                response_msg = f"✅ Added to banned player database:"
-                if "name" in player_info:
-                    response_msg += f"\n• **Name**: {player_info['name']}"
-                response_msg += f"\n• **SteamID**: `{player_info['steamid']}`"
-                if "eosid" in player_info:
-                    response_msg += f"\n• **EOSID**: `{player_info['eosid']}`"
+#                 # Format response message
+#                 response_msg = f"✅ Added to banned player database:"
+#                 if "name" in player_info:
+#                     response_msg += f"\n• **Name**: {player_info['name']}"
+#                 response_msg += f"\n• **SteamID**: `{player_info['steamid']}`"
+#                 if "eosid" in player_info:
+#                     response_msg += f"\n• **EOSID**: `{player_info['eosid']}`"
 
-                await thread.send(response_msg)
-            except sqlite3.IntegrityError:
-                logger.warning(f"Player with SteamID {steamid} already exists")
-                await thread.send(
-                    f"⚠️ Player with SteamID `{steamid}` already in database"
-                )
-            except Exception as e:
-                logger.error(f"Error adding player to database: {e}")
-                await thread.send(f"❌ Error adding to database: {str(e)}")
+#                 await thread.send(response_msg)
+#             except sqlite3.IntegrityError:
+#                 logger.warning(f"Player with SteamID {steamid} already exists")
+#                 await thread.send(
+#                     f"⚠️ Player with SteamID `{steamid}` already in database"
+#                 )
+#             except Exception as e:
+#                 logger.error(f"Error adding player to database: {e}")
+#                 await thread.send(f"❌ Error adding to database: {str(e)}")
 
-    except Exception as e:
-        logger.error(f"Error processing forum post: {e}", exc_info=True)
+#     except Exception as e:
+#         logger.error(f"Error processing forum post: {e}", exc_info=True)
 
 
 @client.event

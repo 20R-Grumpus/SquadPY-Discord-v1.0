@@ -9,6 +9,7 @@ from utils.discord_helpers import DiscordLogHandler
 from utils.retry import init_http_session
 from features.seeding import background_task
 from features.rotation import schedule_daily_rotation_update, rotation_join_link_updater
+from features.battlemetrics_bans import battlemetrics_ban_sync_task
 
 BOT_USERNAME = "OOR v3.1"  # Set to None to disable
 
@@ -74,6 +75,13 @@ async def on_ready():
         logger.info("Join link updater already running — skipping")
 
     commands = await tree.fetch_commands()
+
+    # ---- BattleMetrics ban synchronization ----
+    if not state.ban_sync_task_ref or state.ban_sync_task_ref.done():
+        state.ban_sync_task_ref = asyncio.create_task(battlemetrics_ban_sync_task())
+        logger.info("BattleMetrics ban sync task started")
+    else:
+        logger.info("BattleMetrics ban sync task already running — skipping")
 
     if commands:
         lines = []

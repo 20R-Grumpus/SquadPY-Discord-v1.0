@@ -123,3 +123,111 @@ async def close_http_session():
     if state.http_session and not state.http_session.closed:
         await state.http_session.close()
         logger.info("HTTP session closed")
+
+
+async def fetch_battlemetrics_bans():
+    from config import BATTLEMETRICS_BAN_LIST_ID
+
+    if not BATTLEMETRICS_BAN_LIST_ID:
+        logger.error("BATTLEMETRICS_BAN_LIST_ID is not configured")
+        return None
+
+    await init_http_session()
+
+    url = "https://api.battlemetrics.com/bans"
+
+    params = {
+        "filter[banList]": BATTLEMETRICS_BAN_LIST_ID,
+        "sort": "-timestamp",
+        "page[size]": "100",
+        "include": "player,server,user",
+    }
+
+    all_bans = []
+    all_included = []
+
+    page_number = 0
+
+    while url:
+        page_number += 1
+
+        try:
+            async with state.http_session.get(
+                url,
+                params=params,
+                headers=_battlemetrics_headers(),
+            ) as response:
+
+                if response.status != 200:
+                    body = await response.text()
+
+                    logger.error(
+                        "BattleMetrics bans request failed: %s\n"
+                        "URL: %s\n"
+                        "Body: %s",
+                        response.status,
+                        str(response.url),
+                        body[:2000],
+                    )
+
+                    return None
+
+                payload = await response.json()
+
+        except asyncio.TimeoutError:
+
+            logger.error(
+                "BattleMetrics bans request timed out on page %s",
+                page_number,
+            )
+
+            return None
+
+        except aiohttp.ClientError as e:
+
+            logger.error(
+                "BattleMetrics bans connection error on page %s: %s",
+                page_number,
+                e,
+            )
+
+            return None
+
+        page_data = payload.get("data", [])
+        included = payload.get("included", [])
+
+        if not isinstance(page_data, list):
+
+            logger.error(
+                "BattleMetrics returned invalid ban data on page %s",
+                page_number,
+            )
+
+            return None
+
+        all_bans.extend(page_data)
+
+        if isinstance(included, list):
+            all_included.extend(included)
+
+        logger.debug(
+            "BattleMetrics ban sync page %s: %s bans",
+            page_number,
+            len(page_data),
+        )
+
+        url = payload.get("links", {}).get("next")
+
+        # `next` already contains the pagination parameters.
+        params = None
+
+    logger.info(
+        "BattleMetrics ban fetch completed: %s bans, %s included records",
+        len(all_bans),
+        len(all_included),
+    )
+
+    return {
+        "data": all_bans,
+        "included": all_included,
+    }

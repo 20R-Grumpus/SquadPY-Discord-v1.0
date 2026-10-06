@@ -32,6 +32,7 @@ class BotState:
         self.rotation_task_ref = None
         self.log_sender_task_ref = None
         self.join_link_updater_task_ref = None
+        self.ban_sync_task_ref = None
 
         # Rotation state
         self.rotation_message_id = None
