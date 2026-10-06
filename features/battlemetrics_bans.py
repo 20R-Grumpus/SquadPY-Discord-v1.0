@@ -1034,17 +1034,7 @@ async def sync_battlemetrics_bans():
         # thread.
         # ---------------------------------------------------------
 
-        current = get_ban_by_id(ban["ban_id"])
-
-        if current is None:
-            logger.error(
-                "Ban %s was just upserted but could not "
-                "be retrieved from the database.",
-                ban["ban_id"],
-            )
-            continue
-
-        if not current["discord_posted"]:
+        if previous is None or not previous["discord_posted"]:
 
             thread = await create_ban_forum_post(ban)
 
