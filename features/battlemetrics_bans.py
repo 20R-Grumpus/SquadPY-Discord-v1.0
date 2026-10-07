@@ -974,6 +974,8 @@ async def sync_battlemetrics_bans():
     # Discord state is preserved by the database function.
     # ---------------------------------------------------------
 
+    mark_all_bans_not_seen()
+
     bulk_upsert_battlemetrics_bans(normalized_bans)
 
     # ---------------------------------------------------------
@@ -1062,8 +1064,6 @@ async def sync_battlemetrics_bans():
     # Only NOW is it safe to mark records not returned by the
     # API as no longer present in BattleMetrics.
     # ---------------------------------------------------------
-
-    mark_all_bans_not_seen()
 
     # ---------------------------------------------------------
     # Detect bans that disappeared from BattleMetrics.
