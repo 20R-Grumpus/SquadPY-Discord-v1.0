@@ -47,7 +47,7 @@ class DiscordLogHandler(logging.Handler):
         record.asctime = datetime.now(london_tz).strftime("%Y-%m-%d %H:%M:%S")
         msg = self.format(record)
         try:
-            asyncio.create_task(self.queue.put(msg))
+            self.queue.put_nowait(msg)
         except RuntimeError:
             # silently drop if no loop yet
             pass
