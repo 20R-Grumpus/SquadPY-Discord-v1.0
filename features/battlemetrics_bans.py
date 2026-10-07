@@ -120,21 +120,29 @@ def normalize_ban(raw_ban, included_lookup):
     player_object = None
 
     if player_id:
-        player_object = included_lookup.get(("players", str(player_id)))
+        player_object = included_lookup.get(("player", str(player_id)))
 
     player_name = None
     steamid = None
     eosid = None
 
     if player_object:
-        player_attributes = player_object.get(
-            "attributes",
-            {},
-        )
-
+        player_attributes = player_object.get("attributes", {})
         player_name = player_attributes.get("name")
-
         steamid, eosid = _extract_player_identifiers(player_object)
+
+    issued_by = None
+
+    user_relationship = relationships.get("user", {})
+    user_data = user_relationship.get("data") or {}
+    user_id = user_data.get("id")
+
+    if user_id:
+        user_object = included_lookup.get(("user", str(user_id)))
+
+        if user_object:
+            user_attributes = user_object.get("attributes", {})
+            issued_by = user_attributes.get("nickname")
 
     # Fallback in case BattleMetrics places identifiers
     # directly on the ban record.
@@ -188,6 +196,7 @@ def normalize_ban(raw_ban, included_lookup):
         "server_id": relationship_id("server"),
         "organization_id": relationship_id("organization"),
         "user_id": relationship_id("user"),
+        "issued_by": issued_by,
         "timestamp": attributes.get("timestamp"),
         "expires": attributes.get("expires"),
         "reason": attributes.get("reason"),
@@ -275,20 +284,60 @@ def truncate_discord_text(
 def build_ban_message(ban):
     reason = ban.get("reason")
     note = ban.get("note")
-
-    parts = []
+    issued_by = ban.get("issued_by") or "Unknown"
 
     if reason:
-        parts.append(f"Reason: {reason}")
+        duration = _format_ban_duration(
+            ban.get("expires"),
+            ban.get("timestamp"),
+        )
+
+        time_left = "Permanent"
+
+        expires = _parse_ban_expiration(ban.get("expires"))
+
+        if expires:
+            now = datetime.now(expires.tzinfo)
+            remaining_seconds = int((expires - now).total_seconds())
+
+            if remaining_seconds > 0:
+                days, remainder = divmod(remaining_seconds, 86400)
+                hours, remainder = divmod(remainder, 3600)
+                minutes, _ = divmod(remainder, 60)
+
+                time_parts = []
+
+                if days:
+                    time_parts.append(f"{days}d")
+
+                if hours:
+                    time_parts.append(f"{hours}h")
+
+                if minutes:
+                    time_parts.append(f"{minutes}m")
+
+                time_left = " ".join(time_parts) if time_parts else "<1m"
+            else:
+                time_left = "Expired"
+
+        reason = reason.replace(
+            "{{duration}}",
+            duration,
+        ).replace(
+            "{{timeLeft}}",
+            time_left,
+        )
+
+        message = f"{issued_by} added BattleMetrics Ban " f"({reason})"
+
+    else:
+        message = f"{issued_by} added BattleMetrics Ban"
 
     if note:
-        parts.append(f"Note: {note}")
-
-    if not parts:
-        return "No ban message supplied by BattleMetrics."
+        message += f"\n\nNote: {note}"
 
     return truncate_discord_text(
-        "\n\n".join(parts),
+        message,
         2000,
         "No ban message supplied by BattleMetrics.",
     )
@@ -424,6 +473,50 @@ def _parse_ban_expiration(value):
         return None
 
 
+def _format_ban_duration(expires, timestamp):
+    """
+    Calculate a human-readable ban duration from the
+    BattleMetrics creation and expiration timestamps.
+
+    Returns "Perm" for permanent bans and "Unknown" when
+    the timestamps cannot be calculated.
+    """
+
+    if not expires:
+        return "Perm"
+
+    start = _parse_ban_expiration(timestamp)
+    end = _parse_ban_expiration(expires)
+
+    if not start or not end:
+        return "Unknown"
+
+    total_seconds = int((end - start).total_seconds())
+
+    if total_seconds <= 0:
+        return "Unknown"
+
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+
+    parts = []
+
+    if days:
+        parts.append(f"{days}d")
+
+    if hours:
+        parts.append(f"{hours}h")
+
+    if minutes:
+        parts.append(f"{minutes}m")
+
+    if not parts:
+        return "<1m"
+
+    return " ".join(parts)
+
+
 def _build_discord_snapshot(ban):
     """
     Build a stable representation of the BattleMetrics data
@@ -438,6 +531,7 @@ def _build_discord_snapshot(ban):
             "player_name": ban.get("player_name"),
             "server_id": ban.get("server_id"),
             "user_id": ban.get("user_id"),
+            "issued_by": ban.get("issued_by"),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -563,6 +657,15 @@ def _get_ban_changes(old_ban, new_ban):
             }
         )
 
+    if old_ban.get("issued_by") != new_ban.get("issued_by"):
+        changes.append(
+            {
+                "type": "issuer",
+                "old": (old_ban.get("issued_by") or "Unknown"),
+                "new": (new_ban.get("issued_by") or "Unknown"),
+            }
+        )
+
     return changes
 
 
@@ -629,6 +732,13 @@ def _format_ban_change(change):
         return (
             "🔄 **BattleMetrics Ban Updated**\n"
             f"Moderator: `{change['old']}` → "
+            f"`{change['new']}`"
+        )
+
+    if change_type == "issuer":
+        return (
+            "🔄 **BattleMetrics Ban Updated**\n"
+            f"Issued by: `{change['old']}` → "
             f"`{change['new']}`"
         )
 

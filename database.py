@@ -44,6 +44,7 @@ def init_battlemetrics_bans_db():
                 server_id TEXT,
                 organization_id TEXT,
                 user_id TEXT,
+                issued_by TEXT,
 
                 timestamp TEXT,
                 expires TEXT,
@@ -106,6 +107,16 @@ def init_battlemetrics_bans_db():
             )
 
             columns.add("discord_last_posted_snapshot")
+
+        if "issued_by" not in columns:
+            cursor.execute("""
+                ALTER TABLE battlemetrics_bans
+                ADD COLUMN issued_by TEXT
+                """)
+
+            logger.info("Added issued_by column to BattleMetrics bans database")
+
+            columns.add("issued_by")
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_bans_steamid
@@ -266,6 +277,7 @@ def upsert_ban(ban):
                 server_id,
                 organization_id,
                 user_id,
+                issued_by,
 
                 timestamp,
                 expires,
@@ -290,7 +302,7 @@ def upsert_ban(ban):
             VALUES (
                 ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?,
+                ?, ?, ?, ?,
                 ?, ?,
                 ?, ?,
                 ?, ?, ?,
@@ -314,6 +326,7 @@ def upsert_ban(ban):
                 server_id = excluded.server_id,
                 organization_id = excluded.organization_id,
                 user_id = excluded.user_id,
+                issued_by = excluded.issued_by,
 
                 timestamp = excluded.timestamp,
                 expires = excluded.expires,
@@ -340,6 +353,7 @@ def upsert_ban(ban):
                 ban.get("server_id"),
                 ban.get("organization_id"),
                 ban.get("user_id"),
+                ban.get("issued_by"),
                 ban.get("timestamp"),
                 ban.get("expires"),
                 ban.get("reason"),
@@ -396,6 +410,7 @@ def bulk_upsert_battlemetrics_bans(bans):
                     server_id,
                     organization_id,
                     user_id,
+                    issued_by,
                     timestamp,
                     expires,
                     reason,
@@ -414,8 +429,7 @@ def bulk_upsert_battlemetrics_bans(bans):
                 VALUES (
                     ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?, ?,
+                    ?, ?, ?, ?,
                     ?, ?,
                     ?, ?, ?,
                     NULL,
@@ -436,6 +450,7 @@ def bulk_upsert_battlemetrics_bans(bans):
                     server_id = excluded.server_id,
                     organization_id = excluded.organization_id,
                     user_id = excluded.user_id,
+                    issued_by = excluded.issued_by,
                     timestamp = excluded.timestamp,
                     expires = excluded.expires,
                     reason = excluded.reason,
@@ -458,6 +473,7 @@ def bulk_upsert_battlemetrics_bans(bans):
                     ban.get("server_id"),
                     ban.get("organization_id"),
                     ban.get("user_id"),
+                    ban.get("issued_by"),
                     ban.get("timestamp"),
                     ban.get("expires"),
                     ban.get("reason"),
@@ -505,6 +521,7 @@ def bulk_import_battlemetrics_bans(bans):
                     "player_name": ban.get("player_name"),
                     "server_id": ban.get("server_id"),
                     "user_id": ban.get("user_id"),
+                    "issued_by": ban.get("issued_by"),
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -523,6 +540,7 @@ def bulk_import_battlemetrics_bans(bans):
                     server_id,
                     organization_id,
                     user_id,
+                    issued_by,
                     timestamp,
                     expires,
                     reason,
@@ -541,14 +559,13 @@ def bulk_import_battlemetrics_bans(bans):
                 VALUES (
                     ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?, ?,
+                    ?, ?, ?, ?,
                     ?, ?,
                     ?, ?, ?,
                     NULL,
-                    1,
                     0,
-                    ?,
+                    0,
+                    NULL,
                     1,
                     ?, ?
                 )
@@ -563,6 +580,7 @@ def bulk_import_battlemetrics_bans(bans):
                     server_id = excluded.server_id,
                     organization_id = excluded.organization_id,
                     user_id = excluded.user_id,
+                    issued_by = excluded.issued_by,
                     timestamp = excluded.timestamp,
                     expires = excluded.expires,
                     reason = excluded.reason,
@@ -588,6 +606,7 @@ def bulk_import_battlemetrics_bans(bans):
                     ban.get("server_id"),
                     ban.get("organization_id"),
                     ban.get("user_id"),
+                    ban.get("issued_by"),
                     ban.get("timestamp"),
                     ban.get("expires"),
                     ban.get("reason"),
