@@ -282,13 +282,29 @@ def truncate_discord_text(
     return value[: max_length - 3] + "..."
 
 
+def _escape_markdown_link_text(value):
+    return re.sub(
+        r"([\\`*_{}\[\]()#+\-.!|>~])",
+        r"\\\1",
+        str(value),
+    )
+
+
 def _normalize_note(note):
     if note is None:
         return None
 
-    note_text = html.unescape(re.sub(r"<[^>]*>", "", str(note))).strip()
+    note_text = re.sub(
+        r"<br\s*/?>|</p\s*>",
+        "\n",
+        str(note),
+        flags=re.IGNORECASE,
+    )
+    note_text = re.sub(r"<[^>]*>", "", note_text)
+    note_text = html.unescape(note_text)
+    note_text = re.sub(r"[ \t]*\n[ \t]*", "\n", note_text).strip()
 
-    return note if note_text else None
+    return note_text or None
 
 
 def build_ban_message(ban):
@@ -365,14 +381,13 @@ def build_ban_embed(ban):
         color=8388736,
     )
 
-    # Deliberately don't put the player name inside
-    # Markdown links. Names containing ], (, ), etc.
-    # can otherwise produce malformed Markdown.
-
     if player_id:
+        link_text = _escape_markdown_link_text(
+            truncate_discord_text(player_name, 450)
+        )
         player_value = (
-            f"{truncate_discord_text(player_name, 900)}\n"
-            f"https://www.battlemetrics.com/rcon/players/{player_id}"
+            f"[{link_text}]"
+            f"(https://www.battlemetrics.com/rcon/players/{player_id})"
         )
     else:
         player_value = truncate_discord_text(
@@ -389,18 +404,10 @@ def build_ban_embed(ban):
         inline=True,
     )
 
-    if steamid:
-        steam_value = (
-            f"```{steamid}```\n"
-            f"https://steamcommunity.com/profiles/{steamid}"
-        )
-    else:
-        steam_value = "Unavailable"
-
     embed.add_field(
-        name="SteamID / Steam Profile",
+        name="SteamID",
         value=truncate_discord_text(
-            steam_value,
+            f"```{steamid}```" if steamid else "Unavailable",
             1024,
         ),
         inline=True,
@@ -416,12 +423,11 @@ def build_ban_embed(ban):
     )
 
     embed.add_field(
-        name="Ban ID",
+        name="Steam Profile",
         value=truncate_discord_text(
             (
-                f"[{ban_id}]"
-                f"(https://www.battlemetrics.com/rcon/bans/edit/{ban_id})"
-                if ban_id
+                f"[Steam Profile](https://steamcommunity.com/profiles/{steamid})"
+                if steamid
                 else "Unavailable"
             ),
             1024,
@@ -430,9 +436,14 @@ def build_ban_embed(ban):
     )
 
     embed.add_field(
-        name="Created",
+        name="Ban ID",
         value=truncate_discord_text(
-            ban.get("timestamp"),
+            (
+                f"[{ban_id}]"
+                f"(https://www.battlemetrics.com/rcon/bans/edit/{ban_id})"
+                if ban_id
+                else "Unavailable"
+            ),
             1024,
         ),
         inline=True,
