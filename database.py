@@ -1,5 +1,6 @@
 """SQLite operations for BattleMetrics bans."""
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -836,9 +837,14 @@ async def push_active_bans_to_sftp():
         indent=2,
         ensure_ascii=False,
     )
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    if get_sync_state("battlemetrics_bans_sftp_content_hash") == content_hash:
+        logger.debug("Active BattleMetrics bans unchanged; skipping SFTP upload")
+        return True
 
     try:
-        await sftp_write_content(
+        uploaded = await sftp_write_content(
             sftp_host=SQUADJS_SFTP_HOST,
             sftp_port=SQUADJS_SFTP_PORT,
             sftp_user=SQUADJS_SFTP_USER,
@@ -846,6 +852,12 @@ async def push_active_bans_to_sftp():
             remote_path=SQUADJS_SFTP_BANNED_PLAYERS_PATH,
             content=content,
         )
+
+        if not uploaded:
+            logger.error("Failed to push active BattleMetrics bans to SquadJS")
+            return False
+
+        set_sync_state("battlemetrics_bans_sftp_content_hash", content_hash)
 
         logger.info(
             "Pushed %s active BattleMetrics bans to SquadJS",
