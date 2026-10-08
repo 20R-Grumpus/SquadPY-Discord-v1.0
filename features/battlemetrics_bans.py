@@ -1,6 +1,7 @@
 """BattleMetrics ban synchronization and Discord forum integration."""
 
 import asyncio
+import html
 import json
 import re
 import unicodedata
@@ -281,9 +282,18 @@ def truncate_discord_text(
     return value[: max_length - 3] + "..."
 
 
+def _normalize_note(note):
+    if note is None:
+        return None
+
+    note_text = html.unescape(re.sub(r"<[^>]*>", "", str(note))).strip()
+
+    return note if note_text else None
+
+
 def build_ban_message(ban):
     reason = ban.get("reason")
-    note = ban.get("note")
+    note = _normalize_note(ban.get("note"))
     issued_by = ban.get("issued_by") or "Unknown"
 
     if reason:
@@ -348,6 +358,7 @@ def build_ban_embed(ban):
     player_id = ban.get("player_id")
     steamid = ban.get("steamid")
     eosid = ban.get("eosid")
+    ban_id = ban.get("ban_id")
 
     embed = discord.Embed(
         title="Ban Information",
@@ -379,7 +390,10 @@ def build_ban_embed(ban):
     )
 
     if steamid:
-        steam_value = f"{steamid}\n" f"https://steamcommunity.com/profiles/{steamid}"
+        steam_value = (
+            f"```{steamid}```\n"
+            f"https://steamcommunity.com/profiles/{steamid}"
+        )
     else:
         steam_value = "Unavailable"
 
@@ -395,7 +409,7 @@ def build_ban_embed(ban):
     embed.add_field(
         name="EOS ID",
         value=truncate_discord_text(
-            eosid,
+            f"```{eosid}```" if eosid else "Unavailable",
             1024,
         ),
         inline=True,
@@ -404,7 +418,12 @@ def build_ban_embed(ban):
     embed.add_field(
         name="Ban ID",
         value=truncate_discord_text(
-            ban.get("ban_id"),
+            (
+                f"[{ban_id}]"
+                f"(https://www.battlemetrics.com/rcon/bans/edit/{ban_id})"
+                if ban_id
+                else "Unavailable"
+            ),
             1024,
         ),
         inline=True,
@@ -434,15 +453,6 @@ def build_ban_embed(ban):
         inline=True,
     )
 
-    embed.add_field(
-        name="Ban Message",
-        value=truncate_discord_text(
-            build_ban_message(ban),
-            1024,
-        ),
-        inline=False,
-    )
-
     if steamid:
         embed.add_field(
             name="CBL Profile",
@@ -450,7 +460,7 @@ def build_ban_embed(ban):
             inline=True,
         )
 
-    embed.set_footer(text=f"BattleMetrics Ban ID: {ban.get('ban_id')}")
+    embed.set_footer(text=f"Ban Time: {ban.get('timestamp') or 'Unknown'}")
 
     return embed
 
@@ -607,8 +617,16 @@ def _get_ban_changes(old_ban, new_ban):
         changes.append(
             {
                 "type": change_type,
-                "old": old_expires or "Permanent",
-                "new": new_expires or "Permanent",
+                "old": (
+                    _format_ban_duration(old_expires, new_ban.get("timestamp"))
+                    if old_expires
+                    else "Permanent"
+                ),
+                "new": (
+                    _format_ban_duration(new_expires, new_ban.get("timestamp"))
+                    if new_expires
+                    else "Permanent"
+                ),
             }
         )
 
@@ -621,21 +639,15 @@ def _get_ban_changes(old_ban, new_ban):
             }
         )
 
-    if old_ban.get("note") != new_ban.get("note"):
+    old_note = _normalize_note(old_ban.get("note"))
+    new_note = _normalize_note(new_ban.get("note"))
+
+    if old_note != new_note:
         changes.append(
             {
                 "type": "note",
-                "old": old_ban.get("note") or "None",
-                "new": new_ban.get("note") or "None",
-            }
-        )
-
-    if old_ban.get("player_name") != new_ban.get("player_name"):
-        changes.append(
-            {
-                "type": "player_name",
-                "old": (old_ban.get("player_name") or "Unknown"),
-                "new": (new_ban.get("player_name") or "Unknown"),
+                "old": old_note or "None",
+                "new": new_note or "None",
             }
         )
 
@@ -674,75 +686,75 @@ def _format_ban_change(change):
 
     if change_type == "extended":
         return (
-            "⏩ **BattleMetrics Ban Extended**\n"
+            "**BattleMetrics Ban Extended**\n"
             f"Expiration: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "reduced":
         return (
-            "⏪ **BattleMetrics Ban Reduced**\n"
+            "**BattleMetrics Ban Reduced**\n"
             f"Expiration: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "expiration_added":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Expiration: `Permanent` → "
             f"`{change['new']}`"
         )
 
     if change_type == "permanent":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Expiration: `{change['old']}` → "
             f"`Permanent`"
         )
 
     if change_type == "reason":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Reason: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "note":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Note: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "player_name":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Player name: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "server":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Server: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "moderator":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Moderator: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
     if change_type == "issuer":
         return (
-            "🔄 **BattleMetrics Ban Updated**\n"
+            "**BattleMetrics Ban Updated**\n"
             f"Issued by: `{change['old']}` → "
             f"`{change['new']}`"
         )
 
-    return "🔄 **BattleMetrics Ban Updated**\n" f"`{change['old']}` → `{change['new']}`"
+    return "**BattleMetrics Ban Updated**\n" f"`{change['old']}` → `{change['new']}`"
 
 
 async def post_ban_update(thread_id, changes):
@@ -847,7 +859,7 @@ async def post_ban_deleted(thread_id):
 
     try:
         await thread.send(
-            "🗑️ **BattleMetrics Ban Deleted**\n\n"
+            "**BattleMetrics Ban Deleted**\n\n"
             "This ban was removed from BattleMetrics."
         )
 
