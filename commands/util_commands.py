@@ -45,7 +45,7 @@ class SeedTrackRefreshView(View):
 
 class SeedTrackRefreshButton(Button):
     def __init__(self, message_id):
-        super().__init__(label="Refresh Now", style=discord.ButtonStyle.blurple)
+        super().__init__(label="Refresh", style=discord.ButtonStyle.blurple)
         self.message_id = message_id
 
     async def callback(self, interaction: discord.Interaction):
@@ -468,58 +468,58 @@ async def test(interaction: discord.Interaction):
     await interaction.response.send_message("Test successful")
 
 
-@tree.command(
-    name="seederboard",
-    description="Display the top 30 seeding leaderboard.",
-)
-async def seederboard(interaction: discord.Interaction):
-    await interaction.response.defer()
+# @tree.command(
+#     name="seederboard",
+#     description="Display the top 30 seeding leaderboard.",
+# )
+# async def seederboard(interaction: discord.Interaction):
+#     await interaction.response.defer()
 
-    file_path = SEEDING_LEADERBOARD_FILE
+#     file_path = SEEDING_LEADERBOARD_FILE
 
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            leaderboard = data.get("leaderboard", [])
-            generated_at_str = data.get("generated_at")
-    except Exception as e:
-        await interaction.followup.send(
-            f"❌ Failed to load leaderboard data: `{e}`", ephemeral=True
-        )
-        return
+#     try:
+#         with open(file_path, "r", encoding="utf-8") as f:
+#             data = json.load(f)
+#             leaderboard = data.get("leaderboard", [])
+#             generated_at_str = data.get("generated_at")
+#     except Exception as e:
+#         await interaction.followup.send(
+#             f"❌ Failed to load leaderboard data: `{e}`", ephemeral=True
+#         )
+#         return
 
-    # Build leaderboard display
-    top_30 = leaderboard[:30]
-    lines = []
-    for entry in top_30:
-        rank = entry.get("rank", "?")
-        username = entry.get("username", "Unknown")
-        points = entry.get("points", 0)
-        steamid64 = entry.get("steamid64", "")
-        steam_url = f"https://steamcommunity.com/profiles/{steamid64}"
-        lines.append(f"**{rank}.** [{username}]({steam_url}) — {points} pts")
+#     # Build leaderboard display
+#     top_30 = leaderboard[:30]
+#     lines = []
+#     for entry in top_30:
+#         rank = entry.get("rank", "?")
+#         username = entry.get("username", "Unknown")
+#         points = entry.get("points", 0)
+#         steamid64 = entry.get("steamid64", "")
+#         steam_url = f"https://steamcommunity.com/profiles/{steamid64}"
+#         lines.append(f"**{rank}.** [{username}]({steam_url}) — {points} pts")
 
-    description = "\n".join(lines)
+#     description = "\n".join(lines)
 
-    # Create purple embed
-    embed = discord.Embed(
-        title="❤️ Seeding Leaderboard (Top 30)",
-        description=description,
-        color=9247733,  # Discord blurple
-    )
+#     # Create purple embed
+#     embed = discord.Embed(
+#         title="❤️ Seeding Leaderboard (Top 30)",
+#         description=description,
+#         color=9247733,  # Discord blurple
+#     )
 
-    # Add footer with generated_at time
-    try:
-        if generated_at_str:
-            generated_at_dt = dateutil.parser.isoparse(generated_at_str)
-            formatted_time = generated_at_dt.strftime("%Y-%m-%d %H:%M UTC")
-            embed.set_footer(text=f"🕓 Updated hourly at: {formatted_time}")
-        else:
-            embed.set_footer(text="Last updated: unknown")
-    except Exception:
-        embed.set_footer(text="Last updated: error parsing time")
+#     # Add footer with generated_at time
+#     try:
+#         if generated_at_str:
+#             generated_at_dt = dateutil.parser.isoparse(generated_at_str)
+#             formatted_time = generated_at_dt.strftime("%Y-%m-%d %H:%M UTC")
+#             embed.set_footer(text=f"🕓 Updated hourly at: {formatted_time}")
+#         else:
+#             embed.set_footer(text="Last updated: unknown")
+#     except Exception:
+#         embed.set_footer(text="Last updated: error parsing time")
 
-    await interaction.followup.send(embed=embed)
+#     await interaction.followup.send(embed=embed)
 
 
 def get_start_time(timespan: str) -> datetime | None:
