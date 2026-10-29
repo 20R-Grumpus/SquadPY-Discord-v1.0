@@ -5,12 +5,16 @@ env.txt
 config.json
 secrets.json
 *.db
+whitelist_api_probe.py
+whitelist_api_config.json
+whitelist_api_results/
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+./vscode/
 
 # Logs and runtime state
 *.log

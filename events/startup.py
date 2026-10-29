@@ -10,6 +10,7 @@ from utils.retry import init_http_session
 from features.seeding import background_task
 from features.rotation import schedule_daily_rotation_update, rotation_join_link_updater
 from features.battlemetrics_bans import battlemetrics_ban_sync_task
+from features.whitelist import whitelist_cache_task
 
 BOT_USERNAME = "OOR v3.1"  # Set to None to disable
 
@@ -82,6 +83,12 @@ async def on_ready():
         logger.info("BattleMetrics ban sync task started")
     else:
         logger.info("BattleMetrics ban sync task already running — skipping")
+
+    if not state.whitelist_task_ref or state.whitelist_task_ref.done():
+        state.whitelist_task_ref = asyncio.create_task(whitelist_cache_task())
+        logger.info("Whitelist group/list refresh task started")
+    else:
+        logger.info("Whitelist group/list refresh task already running — skipping")
 
     if commands:
         lines = []

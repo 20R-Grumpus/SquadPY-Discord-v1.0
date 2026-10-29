@@ -120,6 +120,15 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | `BATTLEMETRICS_BAN_LIST_ID` | No (unset disables ban sync) | BattleMetrics ban-list ID synchronized to the Discord forum and SquadJS. |
 | `BATTLEMETRICS_BAN_CHECK_INTERVAL` | No (default `300`) | Seconds between BattleMetrics ban-list syncs. |
 
+### Whitelist API
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `WHITELIST_API_KEY` | Required for whitelist commands | Whitelister API key. Keep it secret; requests send it in the query and request body as required by the API. |
+| `WHITELIST_API_BASE_URL` | No (default `https://whitelister.20rsquad.win`) | HTTPS base URL for the Whitelister API. |
+| `WHITELIST_LOG_CHANNEL_ID` | No (default `0`, disabled) | Channel receiving audit logs for `/addwl` and `/removewl`. |
+| `WHITELIST_REFRESH_INTERVAL_SECONDS` | No (default `300`) | Seconds between refreshes of eligible game groups, the `Main` list ID, and its whitelist entries. |
+
 Fixed seeding behavior (not env-configurable, defined in `config.py`):
 `COOLDOWN_HOURS=8`, auto-trigger band `45`–`55` players, and an auto-seed window of
 `11:00`–`18:00` London time.
@@ -256,8 +265,21 @@ those modules. Summary:
 
 - **Seeding:** `/seedbotstart`, `/seedbotstop`, `/seedbotstatus`, `/seedbothelp`, `/seedbotreload`
 - **Competitive admin config:** `/matchconfig`, `/resetconfig`, `/addcameraman`
+- **Whitelist:** `/addwl`, `/removewl` (gated by `ALLOWED_ROLE_IDS`)
 - **Prospects:** `/addprospect`
 - **Utilities:** `/addfog`, `/showfog`, `/removefog`, `/killfeed`, `/test`, `/seedtrack`
+
+`/addwl` and `/removewl` require a role listed in `ALLOWED_ROLE_IDS`. `/addwl`
+offers only game groups whose sole permission is `reserve`. `/removewl` accepts a
+SteamID or EOSID and removes every matching Main-list entry in those reserve-only
+groups; other groups, including admin groups, are untouched. Both commands post
+the API result publicly. Permanent entries send `durationHours: 0`; month
+durations are sent as 30 days per month. The Main-list ID is discovered from the
+API and persisted in the unified `data/bot_state.json` file. Commands are
+guild-only (not limited to one server) and are globally synced, so they are
+available in each server the bot joins. Configure `WHITELIST_API_KEY` and, if
+desired, `WHITELIST_LOG_CHANNEL_ID` for API access and addition/removal audit
+logs.
 
 The `/seederboard` command is currently disabled (its implementation is commented
 out); `/seedtrack` is the active command for tracked-server player counts. Bans

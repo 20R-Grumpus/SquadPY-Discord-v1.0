@@ -39,11 +39,13 @@ then starts the client.
 │   ├── rotation.py             # Map rotation, Google Sheet parsing, join-link updates
 │   ├── prospects.py            # Prospect review UI, roster sheet writes, role assignment
 │   ├── admins.py               # Admins.cfg generation, backups, remote admin list
+│   ├── whitelist.py            # Whitelister API, group/list refresh, audit logging
 │   └── battlemetrics_bans.py   # Ban sync, forum posts/updates, active-ban SFTP export
 │
 ├── commands/                   # Slash commands, grouped by domain
 │   ├── seeding_commands.py     # /seedbotstart /seedbotstop /seedbotstatus /seedbothelp /seedbotreload
 │   ├── admin_commands.py       # /matchconfig /resetconfig /addcameraman
+│   ├── whitelist_commands.py   # /addwl /removewl
 │   ├── prospect_commands.py    # /addprospect
 │   └── util_commands.py        # /addfog /showfog /removefog /killfeed /test /seedtrack
 │
@@ -234,4 +236,4 @@ builds/exports the active-ban JSON sent to SquadJS.
 ### `events/startup.py`
 - `on_ready()` — attaches the Discord log handler, syncs slash commands to the
   guild, and starts the background tasks (seeding loop, rotation schedule, join-link
-  updater, and BattleMetrics ban sync).
+  updater, BattleMetrics ban sync, and Whitelister group/list/entry refresh).
