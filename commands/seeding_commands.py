@@ -174,7 +174,7 @@ async def seedbothelp(interaction: discord.Interaction):
         "`/seedbotreload` - Reloads map rotation from google sheet.\n"
         "`/seedbothelp` - Displays this help message.\n"
         "`/killfeed` - Upload or pull todays log and parse killfeed from Steam ID or EOS ID.\n"
-        "`/seederboard` - Embeds the current seeding leaderboard.\n"
+        "`/seedtrack` - Shows player counts for tracked servers and supports manual refresh.\n"
     )
     await interaction.followup.send(help_message, ephemeral=True)
 

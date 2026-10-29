@@ -2,15 +2,16 @@
 
 A Discord bot for managing a Squad game-server community. It encourages server
 "seeding" (getting enough players online to make a server live), posts the daily
-map rotation, manages competitive `Admins.cfg` files, tracks banned players, and
-runs the prospect-recruitment workflow.
+map rotation, manages competitive `Admins.cfg` files, synchronizes BattleMetrics
+bans to a Discord evidence forum and SquadJS, and runs the prospect-recruitment
+workflow.
 
 This is the public/template branch: it ships with **no community-specific
 defaults** (channel/role IDs, emoji, branding, or file paths). Configure it for
 your own server entirely through the environment file described below.
 
-The codebase is a modular Python package. For a full map of every file and
-function, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+The codebase is a modular Python package. For a map of its files and key
+components, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Requirements
 
@@ -42,8 +43,9 @@ python main.py
 All configuration is loaded in [`config.py`](config.py) from the environment
 file. Every key below corresponds to a line in `env.txt.example`.
 
-**Required** variables have no default — the bot will fail to start if they are
-missing or malformed. **Optional** variables fall back to the listed default.
+**Required** variables have no default for the feature noted; missing or malformed
+values may prevent startup or cause that feature to fail. **Optional** variables
+fall back to the listed default.
 
 ### Discord core
 
@@ -55,7 +57,7 @@ missing or malformed. **Optional** variables fall back to the listed default.
 | `MESSAGE_CHANNEL_ID` | Yes | Default channel for seeding/announcement messages. |
 | `LOG_CHANNEL_ID` | Yes | Channel the logging handler mirrors log records into. |
 | `STICKY_CHANNEL_ID` | No (default `0`) | Report-only channel that gets the auto-reposted "sticky" reminder message. `0` disables it. |
-| `FORUM_CHANNEL_ID` | Yes | Forum channel watched for new ban-evidence threads. |
+| `FORUM_CHANNEL_ID` | Yes (for ban sync) | Forum channel where BattleMetrics bans are posted and updated. |
 | `PROSPECT_ANNOUNCEMENT_CHANNEL_ID` | Yes | Channel where new-prospect announcements are posted. |
 | `TEST_CHANNEL_ID` | No (default `0` = disabled) | If a command is run in this channel, seeding messages are mirrored here instead of `MESSAGE_CHANNEL_ID`. Useful for testing. |
 
@@ -115,10 +117,24 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | `RESTART_HOUR` | Yes | Hour (London time) used for the scheduled daily restart/reset logic. Does not restart server, pushes rotation prior to restart. |
 | `RESTART_MINUTE` | Yes | Minute used alongside `RESTART_HOUR`. Set 5 min prior to server restart. |
 | `COMPETING_SERVER_DICT` | No (default `{}`) | JSON object of `{"Display Name": "battlemetrics_id"}` for the `/seedtrack` command. |
+| `BATTLEMETRICS_BAN_LIST_ID` | No (unset disables ban sync) | BattleMetrics ban-list ID synchronized to the Discord forum and SquadJS. |
+| `BATTLEMETRICS_BAN_CHECK_INTERVAL` | No (default `300`) | Seconds between BattleMetrics ban-list syncs. |
 
 Fixed seeding behavior (not env-configurable, defined in `config.py`):
 `COOLDOWN_HOURS=8`, auto-trigger band `45`–`55` players, and an auto-seed window of
 `11:00`–`18:00` London time.
+
+### BattleMetrics ban synchronization
+
+Set `BATTLEMETRICS_BAN_LIST_ID` to enable the periodic ban-list sync. The first
+successful sync imports the current list into the local SQLite database as a
+baseline without creating historical Discord posts. Later syncs create forum
+threads for new bans, post changes or removals to existing threads, and export
+currently active, unexpired bans as JSON to the configured SquadJS SFTP path.
+`BATTLEMETRICS_API_KEY` is shared with player-count requests and is recommended
+to avoid the stricter rate limits on unauthenticated BattleMetrics requests.
+The export uses `SQUADJS_SFTP_*` credentials and
+`SQUADJS_SFTP_BANNED_PLAYERS_PATH`.
 
 ### Google Sheets
 
@@ -166,7 +182,7 @@ Used to fetch and refresh the "Join" button link on the rotation message.
 | `SQUADJS_SFTP_PASSWORD` | Yes | SFTP password. Keep this secret. |
 | `SQUADJS_SFTP_FOG_PATH` | Yes (for fog commands) | Remote path of the fog-off layers JSON. |
 | `SQUADJS_SFTP_IP_TRACK_PATH` | Yes (for IP tracking) | Remote path of the IP-tracking data. |
-| `SQUADJS_SFTP_BANNED_PLAYERS_PATH` | No (default `/data/banned_players.json`) | Remote path the banned-players JSON is pushed to. |
+| `SQUADJS_SFTP_BANNED_PLAYERS_PATH` | No (default `/data/banned_players.json`) | Remote path where the active-ban JSON export is written. |
 
 ### Competitive SFTP servers (NA / EU)
 
@@ -207,9 +223,10 @@ code (created automatically at startup), so the bot works out of the box. Overri
 | `ENV_FILE` | `./env.txt` | Path to the environment file this table is loaded from. |
 | `DATA_DIR` | `./data` | Base directory for all files the bot creates. |
 | `UNIFIED_STATE_FILE` | `./data/bot_state.json` | Single JSON file holding all runtime state sections (`seedtrack`, `rotation`, `sticky`, …). |
-| `SEEDING_LEADERBOARD_FILE` | `./data/seeding_leaderboard.json` | JSON data file backing `/seederboard`. |
+| `SEEDING_LEADERBOARD_FILE` | `./data/seeding_leaderboard.json` | Legacy JSON path retained for the currently disabled `/seederboard` command. |
 | `FOG_JSON_PATH` | `./data/fog_off_maps.json` | Local cache of fog-off layers. |
-| `BANNED_PLAYERS_DB_PATH` | `./data/banned_players.db` | SQLite database of banned players. |
+| `BATTLEMETRICS_BANS_DB_PATH` | `./data/battlemetrics_bans.db` | SQLite database for BattleMetrics ban and Discord-sync state. |
+| `BANNED_PLAYERS_DB_PATH` | `./data/banned_players.db` | Legacy config setting; not used by the current BattleMetrics ban sync. |
 | `BACKUP_DIR` | `./data/admin_backups` | Local directory where `Admins.cfg` backups are written (created at startup). |
 | `POP_TRACK_FILE` | `./data/seedtrack_state.json` | **Legacy.** Only read once to migrate seedtrack state into `UNIFIED_STATE_FILE`. |
 | `ROTATION_TRACK_FILE` | `./data/rotation_state.json` | **Legacy.** Only read once to migrate rotation state into `UNIFIED_STATE_FILE`. |
@@ -238,9 +255,14 @@ Slash commands are defined under `commands/` and registered when `main.py` impor
 those modules. Summary:
 
 - **Seeding:** `/seedbotstart`, `/seedbotstop`, `/seedbotstatus`, `/seedbothelp`, `/seedbotreload`
-- **Admin config / bans:** `/matchconfig`, `/resetconfig`, `/addcameraman`, `/removefromdb`, `/addtodb`
+- **Competitive admin config:** `/matchconfig`, `/resetconfig`, `/addcameraman`
 - **Prospects:** `/addprospect`
-- **Utilities:** `/addfog`, `/showfog`, `/removefog`, `/killfeed`, `/test`, `/seederboard`, `/playercounts`, `/seedtrack`
+- **Utilities:** `/addfog`, `/showfog`, `/removefog`, `/killfeed`, `/test`, `/seedtrack`
+
+The `/seederboard` command is currently disabled (its implementation is commented
+out); `/seedtrack` is the active command for tracked-server player counts. Bans
+are synchronized automatically rather than managed through `/addtodb` or
+`/removefromdb` commands.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what each command and helper does.
 
@@ -248,4 +270,4 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what each command and helper does.
 
 - `env.txt` and the runtime state/DB files are gitignored — never commit real
   tokens, passwords, or API keys.
-- `env.txt.example` is a keys-only template and contains no secrets.
+- `env.txt.example` is a configuration template and contains no secrets.

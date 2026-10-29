@@ -1,4 +1,4 @@
-"""Utility slash commands: fog, killfeed, leaderboard, player counts."""
+"""Utility slash commands for fog layers, killfeed, and server player tracking."""
 
 import os
 import re

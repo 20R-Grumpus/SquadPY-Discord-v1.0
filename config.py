@@ -1,7 +1,7 @@
-"""Configuration loading and validation.
+"""Configuration loading and derived settings.
 
 All environment-derived constants live here. Importing this module loads the
-`.env`/`env.txt` file and validates required values.
+configured `.env`/`env.txt` file and parses settings used by the bot.
 """
 
 import os

@@ -1,4 +1,4 @@
-"""Admin database slash commands."""
+"""Competitive server admin-configuration slash commands."""
 
 import re
 from datetime import datetime

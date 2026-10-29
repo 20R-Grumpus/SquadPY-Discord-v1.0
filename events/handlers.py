@@ -1,4 +1,4 @@
-"""Discord event listeners: forum ban evidence and sticky messages."""
+"""Sticky-message event handling; BattleMetrics forum sync lives in features."""
 
 import re
 import asyncio

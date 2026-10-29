@@ -1,17 +1,26 @@
 # Architecture — SquadPY Discord
 
-This document maps the project's file structure and lists every function and class
-in each module, with a one-line description of what it does.
+This document maps the current file structure and summarizes the main
+responsibilities and entry points in each module.
 
-The bot was refactored from a single monolith (`Current Codebase/bot.py`) into the
-modular package below. Modules are layered so imports flow in one direction:
+The bot is organized into configuration and shared runtime primitives, domain
+features, and Discord command/event adapters. These layers are not strictly
+one-directional: features and adapters share the client, configuration, state,
+and utility modules.
 
 ```
-config  ->  state  ->  utils  ->  database / features  ->  commands / events  ->  main
+config / bot / state / utils
+             ↓
+  database / features
+             ↓
+    commands / events
+             ↓
+            main
 ```
 
-`bot.py` (the shared Discord `client` and command `tree`) sits at the bottom with no
-project imports, so any module can import it without creating an import cycle.
+`bot.py` defines the shared Discord `client` and command `tree` without project
+imports. `main.py` imports command and event modules to register their decorators,
+then starts the client.
 
 ## File tree
 
@@ -21,7 +30,7 @@ project imports, so any module can import it without creating an import cycle.
 ├── config.py                   # All env/config loading and derived constants
 ├── state.py                    # Runtime BotState + unified JSON persistence store
 ├── bot.py                      # Shared discord.Client and CommandTree
-├── database.py                 # SQLite banned-players storage
+├── database.py                 # SQLite BattleMetrics ban and sync-state storage
 ├── requirements.txt            # Python dependencies
 ├── env.txt.example             # Sample environment file (keys only, no secrets)
 │
@@ -29,22 +38,23 @@ project imports, so any module can import it without creating an import cycle.
 │   ├── seeding.py              # Seeding triggers, auto-seed window, scheduling, monitor loop
 │   ├── rotation.py             # Map rotation, Google Sheet parsing, join-link updates
 │   ├── prospects.py            # Prospect review UI, roster sheet writes, role assignment
-│   └── admins.py               # Admins.cfg generation, backups, remote admin list
+│   ├── admins.py               # Admins.cfg generation, backups, remote admin list
+│   └── battlemetrics_bans.py   # Ban sync, forum posts/updates, active-ban SFTP export
 │
 ├── commands/                   # Slash commands, grouped by domain
 │   ├── seeding_commands.py     # /seedbotstart /seedbotstop /seedbotstatus /seedbothelp /seedbotreload
-│   ├── admin_commands.py       # /matchconfig /resetconfig /addcameraman /removefromdb /addtodb
+│   ├── admin_commands.py       # /matchconfig /resetconfig /addcameraman
 │   ├── prospect_commands.py    # /addprospect
-│   └── util_commands.py        # /addfog /showfog /removefog /killfeed /test /seederboard /playercounts /seedtrack
+│   └── util_commands.py        # /addfog /showfog /removefog /killfeed /test /seedtrack
 │
 ├── utils/                      # Cross-cutting helpers
 │   ├── sftp.py                 # SFTP read/write/download/modify helpers
 │   ├── discord_helpers.py      # Messaging helpers, log handler, role checks
-│   ├── retry.py                # HTTP session + player-count fetch with retries
+│   ├── retry.py                # BattleMetrics HTTP session, player counts, ban-list fetch
 │   └── validation.py           # SteamID / EOSID / layer-name validators
 │
 └── events/                     # Discord event listeners
-    ├── handlers.py             # on_thread_create (ban evidence), on_message (sticky)
+    ├── handlers.py             # on_message (sticky reminder and !practice)
     └── startup.py              # on_ready (sync commands, start background tasks)
 ```
 
@@ -57,9 +67,9 @@ decorators register against the shared tree, and finally runs the client under
 `if __name__ == "__main__"`.
 
 ### `config.py`
-No functions — a flat module of constants loaded from the environment (via
-`python-dotenv`) plus a few derived values (`SEEDING_MESSAGE`, `milestones`,
-`COMP_SFTP_SERVERS`, `WEEKLY_SHEET_IDS`). See `README.md` for every variable.
+Configuration constants loaded from the environment (via `python-dotenv`), plus
+derived values such as `SEEDING_MESSAGE`, `milestones`, `COMP_SFTP_SERVERS`, and
+`WEEKLY_SHEET_IDS`. See `README.md` for the settings reference.
 
 ### `bot.py`
 No functions — defines the shared `intents`, `client` (`discord.Client`) and
@@ -67,9 +77,9 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 
 ### `state.py`
 - `class BotState` — holds all in-memory mutable runtime state (seeding flags,
-  background-task references, rotation message/channel IDs, HTTP session, sticky
-  message ID). A single instance `state` is shared across modules, replacing the
-  monolith's module-level globals.
+  background-task references including the BattleMetrics ban sync, rotation
+  message/channel IDs, HTTP session, and sticky message ID). A single instance
+  `state` is shared across modules.
 - `_read_store()` — reads the unified JSON store; on first run, migrates the legacy
   per-feature files into it.
 - `_write_store(store)` — atomically writes the store (temp file + `os.replace`).
@@ -84,14 +94,10 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
   `rotation` section.
 
 ### `database.py`
-- `init_banned_players_db()` — creates the SQLite banned-players table if missing
-  (called once at import).
-- `load_banned_players() -> list` — loads all banned players from SQLite.
-- `player_exists(banned_list, steamid) -> bool` — checks if a SteamID is present.
-- `find_player_by_steamid(banned_list, steamid) -> dict | None` — looks up a record.
-- `save_banned_players(banned_list) -> bool` — writes the list back to SQLite.
-- `push_banned_players_to_sftp(banned_list=None) -> bool` — uploads the banned-players
-  JSON to the SquadJS server over SFTP.
+Owns the BattleMetrics bans SQLite database and creates/migrates its schema on
+import. It provides ban lookups and bulk upserts/imports, records synchronization
+checkpoints and Discord-posting state, tracks removals from BattleMetrics, and
+builds/exports the active-ban JSON sent to SquadJS.
 
 ### `utils/sftp.py`
 - `_sftp_write_content_sync(...)` — blocking SFTP upload of in-memory content.
@@ -119,6 +125,8 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 - `fetch_player_count()` — fetches the main server's player count from BattleMetrics.
 - `robust_fetch_player_count(server_id, retries=2)` — player count with retries,
   returning players/max/queue.
+- `fetch_battlemetrics_bans()` — fetches all pages of the configured BattleMetrics
+  ban list and its included player/server/user records.
 - `init_http_session()` — creates the shared `aiohttp` session.
 - `close_http_session()` — closes the shared `aiohttp` session.
 
@@ -153,6 +161,19 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 - `rotation_join_link_updater()` — background loop that refreshes the join link.
 - `schedule_daily_rotation_update()` — schedules the daily rotation post.
 
+### `features/battlemetrics_bans.py`
+- `normalize_ban(...)` — converts BattleMetrics ban records and included
+  relationships into the local database shape.
+- `build_ban_message(...)` / `build_ban_embed(...)` — format new ban details for
+  Discord evidence posts.
+- `create_ban_forum_post(ban)` — creates a forum thread for a newly observed ban.
+- `post_ban_update(thread_id, changes)` / `post_ban_deleted(thread_id)` — append
+  change and removal notices to the associated evidence thread.
+- `sync_battlemetrics_bans()` — imports the initial baseline, then synchronizes
+  new, changed, and removed bans and pushes active bans to SquadJS.
+- `battlemetrics_ban_sync_task()` — repeats synchronization at the configured
+  interval; started by `events/startup.py`.
+
 ### `features/prospects.py`
 - `get_sheets_service()` — builds an authenticated Google Sheets client.
 - `get_sheet_tab_id(service, spreadsheet_id, tab_name="Team Roster")` — resolves a
@@ -184,8 +205,6 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 - `/matchconfig` (`matchconfig`) — rewrite `Admins.cfg` for the given SteamIDs.
 - `/resetconfig` (`resetconfig`) — restore `Admins.cfg` from the remote list.
 - `/addcameraman` (`addcameraman`) — add the Cameraman role for given SteamIDs.
-- `/removefromdb` (`removefromdb`) — remove a player from the banned-players DB.
-- `/addtodb` (`addtodb`) — add a player (SteamID/EOSID) to the banned-players DB.
 
 ### `commands/prospect_commands.py`
 - `/addprospect` (`addprospect`) — open the prospect review UI for a ticket.
@@ -198,24 +217,21 @@ No functions — defines the shared `intents`, `client` (`discord.Client`) and
 - `/removefog` (`remove_fog`) — remove a layer from `fog_off_maps.json`.
 - `/killfeed` (`killfeed`) — pull/parse a log and show the killfeed for an ID.
 - `/test` (`test`) — simple connectivity test command.
-- `/seederboard` (`seederboard`) — post the seeding leaderboard embed.
-- `/playercounts` (`playercounts`) — show player counts across competing servers.
-- `get_start_time(timespan) -> datetime | None` — parses a timespan into a start time.
-- `/seedtrack` (`seedtrack`) — start the live seed-tracking embed.
+- `/seedtrack` (`playercounts`) — show player counts across tracked servers and
+  provide a manual refresh button.
+- `/seederboard` is currently disabled; its implementation is commented out.
 - `seedtrack_update_loop(bot)` — background loop that refreshes the seedtrack embed.
 
 ### `events/handlers.py`
 - `load_sticky_state()` / `save_sticky_state(message_id)` — read/write the sticky
   message ID via the unified `sticky` state section.
-- `extract_steamid_from_title(title) -> str | None` — pulls a SteamID from a forum
-  thread title.
-- `extract_ban_info_from_embed(embed) -> dict | None` — parses ban details from an
-  embed.
-- `on_thread_create(thread)` — on a new ban-evidence forum thread, records the ban
-  and syncs the banned-players DB.
-- `on_message(message)` — maintains the sticky reminder message in the report channel.
+- `on_message(message)` — handles `!practice` and maintains the sticky reminder
+  in the configured channel.
+- Legacy ban-evidence parsing helpers and the commented `on_thread_create` handler
+  are inactive. Current forum integration is implemented in
+  `features/battlemetrics_bans.py`.
 
 ### `events/startup.py`
 - `on_ready()` — attaches the Discord log handler, syncs slash commands to the
   guild, and starts the background tasks (seeding loop, rotation schedule, join-link
-  updater).
+  updater, and BattleMetrics ban sync).

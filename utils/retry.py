@@ -1,4 +1,4 @@
-"""HTTP session management and player-count fetching with retry logic."""
+"""BattleMetrics HTTP session, player-count, and ban-list fetching helpers."""
 
 import asyncio
 
