@@ -31,7 +31,22 @@ DURATION_CHOICES = [
     app_commands.Choice(name="Days", value="days"),
     app_commands.Choice(name="Months", value="months"),
 ]
-DISCORD_MESSAGE_LIMIT = 1900
+
+
+def _log_api_response(operation, actor, status, payload, success):
+    response_body = (
+        payload
+        if isinstance(payload, str)
+        else json.dumps(payload, indent=2, ensure_ascii=False)
+    )
+    log = logger.info if success else logger.warning
+    log(
+        "Whitelister /%s API response for %s (HTTP %s):\n%s",
+        operation,
+        actor,
+        status,
+        response_body,
+    )
 
 
 def _has_allowed_role(interaction: discord.Interaction) -> bool:
@@ -51,22 +66,6 @@ def _duration_hours(duration_type, amount):
     if duration_type == "months":
         return amount * 30 * 24, f"{amount} month(s) (30 days each)"
     raise ValueError("Choose Permanent, Days, or Months.")
-
-
-def _format_api_result(status, payload):
-    if isinstance(payload, str):
-        result = payload
-    else:
-        result = json.dumps(payload, indent=2, ensure_ascii=False)
-    return f"Whitelister API response (HTTP {status}):\n{result}"
-
-
-async def _send_public_result(interaction, message):
-    for offset in range(0, len(message), DISCORD_MESSAGE_LIMIT):
-        await interaction.followup.send(
-            message[offset : offset + DISCORD_MESSAGE_LIMIT],
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
 
 
 async def group_autocomplete(
@@ -197,12 +196,20 @@ async def addwl(
         return
 
     success = 200 <= status < 300
+    _log_api_response("addwl", actor, status, payload, success)
     await send_whitelist_audit(
         f"{'Successful' if success else 'Failed'} /addwl by {actor}: "
         f"username={username!r}; type={id_type.name}; identifier={identifier}; "
         f"group={group}; duration={duration_label}; HTTP {status}"
     )
-    await _send_public_result(interaction, _format_api_result(status, payload))
+    result = "succeeded" if success else "failed"
+    await interaction.followup.send(
+        f"Whitelist addition {result} (HTTP {status}).\n"
+        f"Username: {username}\n"
+        f"{id_type.name}: {identifier}\n"
+        f"Group: {group}\n"
+        f"Duration: {duration_label}"
+    )
 
 
 @tree.command(
@@ -282,20 +289,21 @@ async def removewl(
     group_names = {
         group["id"]: group["name"] for group in get_available_groups()
     }
-    results = []
     audit_results = []
+    successful_groups = []
+    failed_groups = []
     for entry in matching_entries:
         entry_id = entry["_id"]
         group_name = group_names[entry["id_group"]]
         try:
             status, payload = await remove_whitelist_entry(entry_id)
             success = 200 <= status < 300
+            _log_api_response("removewl", actor, status, payload, success)
+            (successful_groups if success else failed_groups).append(group_name)
             audit_results.append(
                 f"{'Successful' if success else 'Failed'} group={group_name}; "
                 f"entry_id={entry_id}; HTTP {status}"
             )
-            result = _format_api_result(status, payload)
-            results.append(f"Group: {group_name}\n{result}")
         except WhitelistAPIError as exc:
             logger.error(
                 "/removewl failed for user %s, entry %s: %s",
@@ -306,9 +314,7 @@ async def removewl(
             audit_results.append(
                 f"Failed group={group_name}; entry_id={entry_id}; error={exc}"
             )
-            results.append(
-                f"Group: {group_name}\nWhitelist API request failed: {exc}"
-            )
+            failed_groups.append(group_name)
 
     await send_whitelist_audit(
         f"/removewl by {actor}: type={id_type.name}; identifier={identifier}; "
@@ -316,8 +322,22 @@ async def removewl(
         f"{'y' if len(matching_entries) == 1 else 'ies'}\n"
         + "\n".join(audit_results)
     )
-    await _send_public_result(
-        interaction,
-        f"Removed whitelist entries for {identifier}:\n\n"
-        + "\n\n".join(results),
+    success_count = len(successful_groups)
+    failure_count = len(failed_groups)
+    result = (
+        "succeeded"
+        if failure_count == 0
+        else "failed"
+        if success_count == 0
+        else "partially succeeded"
+    )
+    group_results = []
+    if successful_groups:
+        group_results.append(f"Removed from: {', '.join(successful_groups)}")
+    if failed_groups:
+        group_results.append(f"Failed for: {', '.join(failed_groups)}")
+    await interaction.followup.send(
+        f"Whitelist removal {result} for {id_type.name} {identifier} "
+        f"({success_count} succeeded, {failure_count} failed).\n"
+        + "\n".join(group_results)
     )
