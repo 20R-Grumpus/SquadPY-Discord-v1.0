@@ -12,6 +12,7 @@ from features.whitelist import (
     add_whitelist_entry,
     get_available_entries,
     get_available_groups,
+    get_main_clan_id,
     get_main_list_id,
     refresh_available_groups,
     refresh_available_entries,
@@ -172,6 +173,7 @@ async def addwl(
         return
 
     try:
+        clan_id = await get_main_clan_id()
         list_id = await get_main_list_id()
         status, payload = await add_whitelist_entry(
             username=username,
@@ -180,6 +182,7 @@ async def addwl(
             group_id=selected_group["id"],
             duration_hours=duration_hours,
             discord_username=interaction.user.name,
+            clan_id=clan_id,
             list_id=list_id,
         )
     except WhitelistAPIError as exc:

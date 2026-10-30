@@ -126,8 +126,9 @@ Discord custom-emoji markup, e.g. `<a:name:id>` (animated) or `<:name:id>` (stat
 | --- | --- | --- |
 | `WHITELIST_API_KEY` | Required for whitelist commands | Whitelister API key. Keep it secret; requests send it in the query and request body as required by the API. |
 | `WHITELIST_API_BASE_URL` | No (default `https://whitelister.20rsquad.win`) | HTTPS base URL for the Whitelister API. |
+| `WHITELIST_MAIN_CLAN_NAME` | Required for `/addwl` | Exact clan `full_name` used for new whitelist entries; its ID is discovered and persisted automatically. |
 | `WHITELIST_LOG_CHANNEL_ID` | No (default `0`, disabled) | Channel receiving audit logs for `/addwl` and `/removewl`. |
-| `WHITELIST_REFRESH_INTERVAL_SECONDS` | No (default `300`) | Seconds between refreshes of eligible game groups, the `Main` list ID, and its whitelist entries. |
+| `WHITELIST_REFRESH_INTERVAL_SECONDS` | No (default `300`) | Seconds between refreshes of eligible game groups, the `Main` list and clan IDs, and its whitelist entries. |
 
 Fixed seeding behavior (not env-configurable, defined in `config.py`):
 `COOLDOWN_HOURS=8`, auto-trigger band `45`–`55` players, and an auto-seed window of
@@ -274,8 +275,9 @@ offers only game groups whose sole permission is `reserve`. `/removewl` accepts 
 SteamID or EOSID and removes every matching Main-list entry in those reserve-only
 groups; other groups, including admin groups, are untouched. Both commands post
 the API result publicly. Permanent entries send `durationHours: 0`; month
-durations are sent as 30 days per month. The Main-list ID is discovered from the
-API and persisted in the unified `data/bot_state.json` file. Commands are
+durations are sent as 30 days per month. The Main-list and configured clan IDs
+are discovered from the API and persisted in the unified `data/bot_state.json`
+file. Set `WHITELIST_MAIN_CLAN_NAME` to the clan's exact `full_name`. Commands are
 guild-only (not limited to one server) and are globally synced, so they are
 available in each server the bot joins. Configure `WHITELIST_API_KEY` and, if
 desired, `WHITELIST_LOG_CHANNEL_ID` for API access and addition/removal audit

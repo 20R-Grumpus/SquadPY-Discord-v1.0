@@ -39,7 +39,7 @@ then starts the client.
 │   ├── rotation.py             # Map rotation, Google Sheet parsing, join-link updates
 │   ├── prospects.py            # Prospect review UI, roster sheet writes, role assignment
 │   ├── admins.py               # Admins.cfg generation, backups, remote admin list
-│   ├── whitelist.py            # Whitelister API, group/list refresh, audit logging
+│   ├── whitelist.py            # Whitelister API, clan/group/list refresh, audit logging
 │   └── battlemetrics_bans.py   # Ban sync, forum posts/updates, active-ban SFTP export
 │
 ├── commands/                   # Slash commands, grouped by domain

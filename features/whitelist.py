@@ -12,6 +12,7 @@ from config import (
     WHITELIST_API_BASE_URL,
     WHITELIST_API_KEY,
     WHITELIST_LOG_CHANNEL_ID,
+    WHITELIST_MAIN_CLAN_NAME,
     WHITELIST_REFRESH_INTERVAL_SECONDS,
     logger,
 )
@@ -19,6 +20,7 @@ from state import get_state, state, update_state
 from utils.retry import init_http_session
 
 API_PATHS = {
+    "clans": "/api/clans/getAllClans",
     "groups": "/api/gameGroups/read/getAllGroups",
     "lists": "/api/lists/read/getAll",
     "entries": "/api/whitelist/read/getAll",
@@ -166,6 +168,93 @@ async def get_main_list_id():
     )
 
 
+async def refresh_main_clan_id():
+    """Discover the configured main clan and persist its ID."""
+    if not WHITELIST_MAIN_CLAN_NAME:
+        logger.error("WHITELIST_MAIN_CLAN_NAME is not configured.")
+        return False
+
+    try:
+        status, payload = await _api_request("GET", API_PATHS["clans"])
+    except WhitelistAPIError as exc:
+        logger.warning("Could not refresh Whitelister clans: %s", exc)
+        return False
+
+    if status != 200:
+        logger.warning("Whitelister clan refresh returned HTTP %s.", status)
+        return False
+
+    try:
+        rows = _response_rows(payload, "clan")
+    except WhitelistAPIError as exc:
+        logger.error("%s", exc)
+        return False
+
+    matching = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance(row.get("full_name"), str)
+        and row["full_name"].casefold() == WHITELIST_MAIN_CLAN_NAME.casefold()
+        and isinstance(row.get("_id"), str)
+        and row["_id"]
+    ]
+    if len(matching) != 1:
+        logger.error(
+            "Expected exactly one Whitelister clan named %s; found %s.",
+            WHITELIST_MAIN_CLAN_NAME,
+            len(matching),
+        )
+        return False
+
+    clan_id = matching[0]["_id"]
+    stored_state = get_state("whitelist", {})
+    if (
+        not isinstance(stored_state, dict)
+        or stored_state.get("main_clan_name") != WHITELIST_MAIN_CLAN_NAME
+        or stored_state.get("main_clan_id") != clan_id
+    ):
+        try:
+            update_state(
+                "whitelist",
+                main_clan_name=WHITELIST_MAIN_CLAN_NAME,
+                main_clan_id=clan_id,
+            )
+        except OSError:
+            logger.exception("Could not persist the Whitelister main clan ID.")
+            return False
+    logger.info(
+        "Whitelister main clan ID refreshed for %s.",
+        WHITELIST_MAIN_CLAN_NAME,
+    )
+    return True
+
+
+async def get_main_clan_id():
+    stored_state = get_state("whitelist", {})
+    saved_clan_id = (
+        stored_state.get("main_clan_id")
+        if isinstance(stored_state, dict)
+        and stored_state.get("main_clan_name") == WHITELIST_MAIN_CLAN_NAME
+        else None
+    )
+    if isinstance(saved_clan_id, str) and saved_clan_id:
+        return saved_clan_id
+    if await refresh_main_clan_id():
+        stored_state = get_state("whitelist", {})
+        saved_clan_id = (
+            stored_state.get("main_clan_id")
+            if isinstance(stored_state, dict)
+            and stored_state.get("main_clan_name") == WHITELIST_MAIN_CLAN_NAME
+            else None
+        )
+        if isinstance(saved_clan_id, str) and saved_clan_id:
+            return saved_clan_id
+    raise WhitelistAPIError(
+        "The configured Whitelister main clan could not be found or initialized."
+    )
+
+
 async def refresh_available_groups():
     """Refresh groups, excluding any group whose permissions include ban."""
     global _available_groups
@@ -270,6 +359,7 @@ def get_available_entries():
 
 async def refresh_whitelist_data():
     await refresh_main_list_id()
+    await refresh_main_clan_id()
     await asyncio.gather(
         refresh_available_groups(),
         refresh_available_entries(),
@@ -290,6 +380,7 @@ async def add_whitelist_entry(
     group_id,
     duration_hours,
     discord_username,
+    clan_id,
     list_id,
 ):
     body = {
@@ -297,7 +388,7 @@ async def add_whitelist_entry(
         "steamid64": identifier if identifier_type == "steamid64" else "",
         "eosID": identifier if identifier_type == "eosID" else "",
         "discordUsername": discord_username,
-        "sel_clan_id": "",
+        "sel_clan_id": clan_id,
         "group": group_id,
         "durationHours": duration_hours,
         "sel_list_id": list_id,
